@@ -60,9 +60,55 @@ _PULSE_TRAILING = re.compile(r"^\s*[/\\,;-]?\s*(\d{2,3})(?!\d)")
 
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 
+# ---------------------------------------------------------- показатели здоровья
+
+_SLEEP_WORD = r"(?:сон|сна|спал[аи]?|поспал[аи]?)"
+
+# «сон 23:21-7:01», «спал с 23:21 до 7:01»
+_SLEEP_RANGE = re.compile(
+    _SLEEP_WORD + r"\b[\s:]*(?:с\s+)?(\d{1,2})[:.](\d{2})\s*(?:-|–|—|до|по)\s*"
+    r"(\d{1,2})[:.](\d{2})",
+    re.IGNORECASE,
+)
+# «сон 7ч40м», «спал 7 часов», «сон 7 ч».
+# Варианты слов идут от длинного к короткому: иначе «ч» съест начало «часов».
+_SLEEP_HOURS = re.compile(
+    _SLEEP_WORD + r"\b[\s:]*(\d{1,2})\s*(?:часов|часа|час|ч)\.?"
+    r"(?:\s*(\d{1,2})\s*(?:минут[аы]?|минут|мин|м)?\.?)?",
+    re.IGNORECASE,
+)
+# «сон 7:40» — одно время после слова «сон» читаем как длительность
+_SLEEP_CLOCK = re.compile(_SLEEP_WORD + r"\b[\s:]*(\d{1,2})[:.](\d{2})", re.IGNORECASE)
+
+_STEPS = re.compile(
+    r"(?:шаг(?:и|ов)?\b[\s:]*(\d{3,6})|(\d{3,6})\s*шаг(?:ов|а|и)?\b)", re.IGNORECASE
+)
+
+# «пульс покоя 58», «пп 58», «rhr 58» — ищется до обычного пульса
+_RESTING_PULSE = re.compile(
+    r"(?:пульс\s+(?:покоя|в\s+покое)|пп|rhr)\b[\s:=]*(\d{2,3})", re.IGNORECASE
+)
+
+_WEIGHT = re.compile(
+    r"(?:вес\b[\s:=]*(\d{2,3}(?:[.,]\d{1,2})?)|(\d{2,3}(?:[.,]\d{1,2})?)\s*кг\b)",
+    re.IGNORECASE,
+)
+
+MIN_SLEEP_MINUTES, MAX_SLEEP_MINUTES = 30, 16 * 60
+MIN_STEPS, MAX_STEPS = 0, 120_000
+MIN_RESTING_PULSE, MAX_RESTING_PULSE = 25, 150
+MIN_WEIGHT, MAX_WEIGHT = 20.0, 400.0
+
 
 class ParseError(ValueError):
     """Текст похож на измерение, но цифры не складываются в осмысленные."""
+
+
+@dataclass(frozen=True)
+class ParsedMetric:
+    kind: str
+    value: float
+    extra: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,6 +118,19 @@ class ParsedMeasurement:
     pulse: Optional[int]
     measured_at: dt.datetime
     note: str
+
+
+@dataclass(frozen=True)
+class ParsedEntry:
+    """Что удалось вычитать из сообщения: измерение, показатели, комментарий."""
+
+    measurement: Optional[ParsedMeasurement]
+    metrics: tuple[ParsedMetric, ...]
+    on_date: dt.date
+    note: str
+
+    def __bool__(self) -> bool:
+        return self.measurement is not None or bool(self.metrics)
 
 
 def _cut(text: str, start: int, end: int) -> str:
@@ -163,34 +222,130 @@ def _validate(systolic: int, diastolic: int, pulse: Optional[int]) -> None:
         )
 
 
-def parse_measurement(
-    text: str, now: Optional[dt.datetime] = None
-) -> Optional[ParsedMeasurement]:
-    """Разбирает строку в измерение. None — если давления в тексте нет."""
+def _extract_metrics(text: str) -> tuple[str, list[ParsedMetric]]:
+    """Вынимает сон, шаги, пульс покоя и вес. Порядок важен.
+
+    Сон ищется раньше времени замера, иначе «23:21-7:01» станет временем;
+    пульс покоя — раньше обычного пульса, иначе «пульс покоя 58» съест его.
+    """
+    found: list[ParsedMetric] = []
+
+    match = _SLEEP_RANGE.search(text)
+    if match is not None:
+        bed = dt.time(int(match.group(1)) % 24, int(match.group(2)))
+        wake = dt.time(int(match.group(3)) % 24, int(match.group(4)))
+        minutes = (
+            dt.datetime.combine(dt.date(2000, 1, 2), wake)
+            - dt.datetime.combine(dt.date(2000, 1, 1), bed)
+        ).total_seconds() / 60
+        if minutes > 24 * 60:
+            minutes -= 24 * 60  # лёг после полуночи: 01:00–07:00 — это 6 часов
+        _check_sleep(minutes)
+        found.append(
+            ParsedMetric(
+                "sleep", minutes, f"{bed.strftime('%H:%M')}-{wake.strftime('%H:%M')}"
+            )
+        )
+        text = _cut(text, match.start(), match.end())
+    else:
+        match = _SLEEP_HOURS.search(text)
+        if match is not None:
+            minutes = int(match.group(1)) * 60 + int(match.group(2) or 0)
+            _check_sleep(minutes)
+            found.append(ParsedMetric("sleep", minutes))
+            text = _cut(text, match.start(), match.end())
+        else:
+            match = _SLEEP_CLOCK.search(text)
+            if match is not None:
+                minutes = int(match.group(1)) * 60 + int(match.group(2))
+                _check_sleep(minutes)
+                found.append(ParsedMetric("sleep", minutes))
+                text = _cut(text, match.start(), match.end())
+
+    match = _STEPS.search(text)
+    if match is not None:
+        steps = int(match.group(1) or match.group(2))
+        if not MIN_STEPS <= steps <= MAX_STEPS:
+            raise ParseError(f"{steps} шагов — похоже на опечатку.")
+        found.append(ParsedMetric("steps", steps))
+        text = _cut(text, match.start(), match.end())
+
+    match = _RESTING_PULSE.search(text)
+    if match is not None:
+        pulse = int(match.group(1))
+        if not MIN_RESTING_PULSE <= pulse <= MAX_RESTING_PULSE:
+            raise ParseError(
+                f"Пульс покоя {pulse} — жду значение от {MIN_RESTING_PULSE} "
+                f"до {MAX_RESTING_PULSE}."
+            )
+        found.append(ParsedMetric("resting_pulse", pulse))
+        text = _cut(text, match.start(), match.end())
+
+    match = _WEIGHT.search(text)
+    if match is not None:
+        weight = float((match.group(1) or match.group(2)).replace(",", "."))
+        if not MIN_WEIGHT <= weight <= MAX_WEIGHT:
+            raise ParseError(
+                f"Вес {weight} кг — жду значение от {MIN_WEIGHT:.0f} до {MAX_WEIGHT:.0f}."
+            )
+        found.append(ParsedMetric("weight", weight))
+        text = _cut(text, match.start(), match.end())
+
+    return text, found
+
+
+def _check_sleep(minutes: float) -> None:
+    if not MIN_SLEEP_MINUTES <= minutes <= MAX_SLEEP_MINUTES:
+        hours = minutes / 60
+        raise ParseError(
+            f"Сон {hours:.1f} ч — похоже на опечатку. Напиши так: "
+            "<code>сон 23:21-7:01</code> или <code>сон 7ч40м</code>."
+        )
+
+
+def parse_entry(text: str, now: Optional[dt.datetime] = None) -> ParsedEntry:
+    """Разбирает сообщение целиком: давление, показатели здоровья, комментарий."""
     now = now or dt.datetime.now()
     working = (text or "").strip()
     if not working:
-        return None
+        return ParsedEntry(None, (), now.date(), "")
 
     working, date = _extract_date(working, now.date())
+    working, metrics = _extract_metrics(working)
     working, time = _extract_time(working)
     working, pressure, pulse = _extract_pressure(working)
+
     if pressure is None:
-        return None
+        return ParsedEntry(None, tuple(metrics), date or now.date(), _cleanup_note(working))
+
     if pulse is None:
         working, pulse = _extract_marked_pulse(working)
 
     systolic, diastolic = pressure
     _validate(systolic, diastolic, pulse)
 
-    measured_at = dt.datetime.combine(date or now.date(), time or now.time().replace(second=0))
-    return ParsedMeasurement(
-        systolic=systolic,
-        diastolic=diastolic,
-        pulse=pulse,
-        measured_at=measured_at.replace(second=0, microsecond=0),
-        note=_cleanup_note(working),
+    measured_at = dt.datetime.combine(date or now.date(), time or now.time())
+    measured_at = measured_at.replace(second=0, microsecond=0)
+    note = _cleanup_note(working)
+    return ParsedEntry(
+        measurement=ParsedMeasurement(
+            systolic=systolic,
+            diastolic=diastolic,
+            pulse=pulse,
+            measured_at=measured_at,
+            note=note,
+        ),
+        metrics=tuple(metrics),
+        on_date=measured_at.date(),
+        note=note,
     )
+
+
+def parse_measurement(
+    text: str, now: Optional[dt.datetime] = None
+) -> Optional[ParsedMeasurement]:
+    """Только давление. None — если его в тексте нет."""
+    return parse_entry(text, now).measurement
 
 
 def parse_time(text: str) -> Optional[dt.time]:

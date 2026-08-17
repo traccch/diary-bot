@@ -6,8 +6,9 @@ import datetime as dt
 import html
 from typing import Optional, Sequence
 
+from . import metrics
 from .classify import classify
-from .db import Measurement
+from .db import Measurement, Metric
 
 MONTHS_GENITIVE = (
     "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -131,6 +132,19 @@ def render_measurement(
         tail += f" · #{measurement.id}"
     lines.append(f"<i>{tail}</i>")
     return "\n".join(lines)
+
+
+def render_metric(metric: Metric, today: Optional[dt.date] = None) -> str:
+    """Строка подтверждения записанного показателя."""
+    kind = metrics.kind_of(metric.kind)
+    if kind is None:
+        return ""
+    value = metrics.format_value(kind.key, metric.value)
+    extra = f" <i>({metric.extra.replace('-', '–')})</i>" if metric.extra else ""
+    when = ""
+    if today is not None and metric.on_date != today:
+        when = f" <i>· {format_date(metric.on_date, today)}</i>"
+    return f"{kind.icon} {kind.title}: <b>{value}</b>{extra}{when}"
 
 
 def render_line(measurement: Measurement, now: Optional[dt.datetime] = None) -> str:

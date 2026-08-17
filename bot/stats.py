@@ -6,14 +6,16 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
+from . import metrics
 from .classify import ALL_GRADES, CRISIS_DIA, CRISIS_SYS, Grade, classify, in_target
-from .db import Database, Measurement, UserSettings
+from .db import Database, Measurement, Metric, UserSettings
 from .formatting import (
     bar,
     days_word,
     esc,
     format_period,
     measurements_word,
+    plural,
     short_moment,
     sparkline,
 )
@@ -304,7 +306,286 @@ async def build_report(
         f"{summary.count} {measurements_word(summary.count)}</i>",
         "",
     ]
-    return "\n".join(header + render_summary(summary, user, trend))
+    body = render_summary(summary, user, trend)
+    body.extend(await build_health_block(db, user, measurements, start, end))
+    return "\n".join(header + body)
+
+
+# ------------------------------------------------------- показатели здоровья
+
+
+@dataclass(frozen=True)
+class MetricSummary:
+    kind: metrics.MetricKind
+    count: int
+    average: float
+    lowest: float
+    highest: float
+    latest: float
+    latest_date: dt.date
+    first: float
+    values: list[tuple[dt.date, float]]
+
+    @property
+    def delta(self) -> float:
+        """Насколько последнее значение отличается от первого за период."""
+        return self.latest - self.first
+
+
+@dataclass(frozen=True)
+class Correlation:
+    """Давление в дни с низким и высоким значением показателя.
+
+    Порог — медиана самого пользователя: у «шестичасового» сна и у
+    «восьмичасового» она разная, и фиксированная граница одному из них
+    не сказала бы ничего.
+    """
+
+    kind: metrics.MetricKind
+    threshold: float
+    low_count: int
+    low_sys: int
+    low_dia: int
+    high_count: int
+    high_sys: int
+    high_dia: int
+    morning_only: bool
+
+    @property
+    def delta_sys(self) -> int:
+        return self.low_sys - self.high_sys
+
+    @property
+    def delta_dia(self) -> int:
+        return self.low_dia - self.high_dia
+
+    @property
+    def meaningful(self) -> bool:
+        return abs(self.delta_sys) >= 3 or abs(self.delta_dia) >= 3
+
+
+def summarize_metric(
+    kind: metrics.MetricKind, values: Sequence[Metric]
+) -> Optional[MetricSummary]:
+    if not values:
+        return None
+    ordered = sorted(values, key=lambda item: item.on_date)
+    numbers = [item.value for item in ordered]
+    return MetricSummary(
+        kind=kind,
+        count=len(ordered),
+        average=sum(numbers) / len(numbers),
+        lowest=min(numbers),
+        highest=max(numbers),
+        latest=ordered[-1].value,
+        latest_date=ordered[-1].on_date,
+        first=ordered[0].value,
+        values=[(item.on_date, item.value) for item in ordered],
+    )
+
+
+#: Меньше этого числа пар сравнение — гадание на кофейной гуще.
+MIN_PAIRS = 10
+MIN_GROUP = 4
+
+
+def correlate(
+    measurements: Sequence[Measurement],
+    values: Sequence[Metric],
+    kind: metrics.MetricKind,
+    morning_only: bool = False,
+) -> Optional[Correlation]:
+    """Сравнивает давление в дни ниже и выше медианы показателя."""
+    by_date = {item.on_date: item.value for item in values}
+    pairs = [
+        (by_date[m.measured_at.date()], m)
+        for m in measurements
+        if m.measured_at.date() in by_date
+        and (not morning_only or day_part(m.measured_at)[0] == "morning")
+    ]
+    if len(pairs) < MIN_PAIRS:
+        return None
+
+    threshold = metrics.median([value for value, _ in pairs])
+    low = [m for value, m in pairs if value <= threshold]
+    high = [m for value, m in pairs if value > threshold]
+    if len(low) < MIN_GROUP or len(high) < MIN_GROUP:
+        return None
+
+    return Correlation(
+        kind=kind,
+        threshold=threshold,
+        low_count=len(low),
+        low_sys=_mean([m.systolic for m in low]),
+        low_dia=_mean([m.diastolic for m in low]),
+        high_count=len(high),
+        high_sys=_mean([m.systolic for m in high]),
+        high_dia=_mean([m.diastolic for m in high]),
+        morning_only=morning_only,
+    )
+
+
+def render_metric_line(summary: MetricSummary) -> str:
+    kind = summary.kind
+    average = metrics.format_value(kind.key, summary.average)
+    if kind.key == metrics.WEIGHT.key:
+        delta = summary.delta
+        if abs(delta) < 0.15 or summary.count < 2:
+            tail = "без изменений за период"
+        else:
+            sign = "−" if delta < 0 else "+"
+            tail = f"{sign}{abs(delta):.1f}".replace(".", ",") + " кг за период"
+        return (
+            f"{kind.icon} <b>{kind.title}</b>: "
+            f"{metrics.format_value(kind.key, summary.latest)} · {tail}"
+        )
+
+    # у шагов и пульса единица уже названа в заголовке строки — не повторяем
+    average = metrics.format_value(
+        kind.key, summary.average, short=kind.key != metrics.SLEEP.key
+    )
+    extra = {
+        metrics.SLEEP.key: f"{summary.count} "
+        + plural(summary.count, "ночь", "ночи", "ночей"),
+        metrics.STEPS.key: f"{summary.count} "
+        + plural(summary.count, "день", "дня", "дней"),
+        metrics.RESTING_PULSE.key: f"{summary.count} "
+        + plural(summary.count, "замер", "замера", "замеров"),
+    }[kind.key]
+    return f"{kind.icon} <b>{kind.title}</b>: {average} в среднем · {extra}"
+
+
+def render_correlation(correlation: Correlation) -> list[str]:
+    kind = correlation.kind
+    # у сна короткая форма выглядит как время на часах («7:00»), а нужна длительность
+    threshold = metrics.format_value(
+        kind.key, correlation.threshold, short=kind.key == metrics.STEPS.key
+    )
+
+    if kind.key == metrics.SLEEP.key:
+        header = "Сон и утреннее давление"
+        low_title, high_title = f"Ночи до {threshold}", "Ночи длиннее"
+        subject = "После коротких ночей"
+    else:
+        header = "Шаги и давление"
+        low_title, high_title = f"Дни до {threshold} шагов", "Дни активнее"
+        subject = "В малоподвижные дни"
+
+    lines = [
+        f"{kind.icon} <b>{header}</b>",
+        f"{low_title} <i>(n={correlation.low_count})</i> — "
+        f"<b>{correlation.low_sys}/{correlation.low_dia}</b>",
+        f"{high_title} <i>(n={correlation.high_count})</i> — "
+        f"<b>{correlation.high_sys}/{correlation.high_dia}</b>",
+    ]
+    if not correlation.meaningful:
+        lines.append("<i>Разница в пределах погрешности.</i>")
+        return lines
+
+    # delta считается как «ниже порога минус выше порога»: плюс значит,
+    # что в дни с меньшим значением показателя давление выше
+    word = "выше" if correlation.delta_sys > 0 else "ниже"
+    lines.append(
+        f"<i>{subject} давление {word} на "
+        f"{abs(correlation.delta_sys)}/{abs(correlation.delta_dia)}.</i>"
+    )
+    return lines
+
+
+async def collect_health(
+    db: Database,
+    user: UserSettings,
+    measurements: Sequence[Measurement],
+    start: dt.datetime,
+    end: dt.datetime,
+) -> tuple[list[MetricSummary], list[Correlation]]:
+    """Показатели за период и их связь с давлением."""
+    summaries: list[MetricSummary] = []
+    links: list[Correlation] = []
+    stored: dict[str, list[Metric]] = {}
+
+    for kind in metrics.ALL_KINDS:
+        values = await db.metrics_between(user.user_id, kind.key, start.date(), end.date())
+        stored[kind.key] = values
+        summary = summarize_metric(kind, values)
+        if summary is not None:
+            summaries.append(summary)
+
+    # Сон сравниваем только с утренними замерами: именно на них он и виден.
+    for kind, morning_only in ((metrics.SLEEP, True), (metrics.STEPS, False)):
+        correlation = correlate(measurements, stored[kind.key], kind, morning_only)
+        if correlation is not None:
+            links.append(correlation)
+
+    return summaries, links
+
+
+async def build_health_block(
+    db: Database,
+    user: UserSettings,
+    measurements: Sequence[Measurement],
+    start: dt.datetime,
+    end: dt.datetime,
+) -> list[str]:
+    """Блок «Здоровье» для сводки в чате."""
+    summaries, links = await collect_health(db, user, measurements, start, end)
+    if not summaries:
+        return []
+
+    lines = ["", "<b>Здоровье</b>"]
+    lines.extend(render_metric_line(summary) for summary in summaries)
+
+    if links:
+        lines.append("")
+        lines.append("<b>Что с чем связано</b>")
+        for index, correlation in enumerate(links):
+            if index:
+                lines.append("")
+            lines.extend(render_correlation(correlation))
+
+    return lines
+
+
+def health_lines_plain(
+    summaries: Sequence[MetricSummary], links: Sequence[Correlation]
+) -> list[str]:
+    """То же самое для PDF и текстового отчёта — без разметки и эмодзи."""
+    if not summaries:
+        return []
+
+    lines = ["", "Показатели здоровья:"]
+    for summary in summaries:
+        value = metrics.format_value(summary.kind.key, summary.average)
+        title = f"{summary.kind.title} (среднее):"
+        lines.append(f"    {title:<26} {value}   n={summary.count}")
+        if summary.kind.key == metrics.WEIGHT.key and summary.count > 1:
+            delta = summary.delta
+            sign = "-" if delta < 0 else "+"
+            change = f"{abs(delta):.1f}".replace(".", ",")
+            lines.append(
+                f"    {'Вес (динамика):':<26} "
+                f"{metrics.format_value(summary.kind.key, summary.first)} → "
+                f"{metrics.format_value(summary.kind.key, summary.latest)} "
+                f"({sign}{change} кг)"
+            )
+
+    for correlation in links:
+        threshold = metrics.format_value(correlation.kind.key, correlation.threshold)
+        when = "утреннее" if correlation.morning_only else "дневное"
+        lines.append("")
+        lines.append(
+            f"Давление и «{correlation.kind.title.lower()}» "
+            f"(порог — медиана {threshold}):"
+        )
+        lines.append(
+            f"    ниже порога:  {correlation.low_sys}/{correlation.low_dia} "
+            f"({when}, n={correlation.low_count})"
+        )
+        lines.append(
+            f"    выше порога:  {correlation.high_sys}/{correlation.high_dia} "
+            f"({when}, n={correlation.high_count})"
+        )
+    return lines
 
 
 def render_peaks(summary: Summary, now: dt.datetime) -> list[str]:

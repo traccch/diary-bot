@@ -13,16 +13,19 @@ from aiogram.types import CallbackQuery, Message
 
 from ..classify import alert
 from ..db import Database, UserSettings
-from ..formatting import esc, measurements_word, render_line, render_measurement
+from ..formatting import esc, measurements_word, render_line, render_measurement, render_metric
 from ..keyboards import delete_buttons, measurement_actions, skip_note
-from ..parsing import ParseError, looks_like_numbers, parse_measurement
+from ..parsing import ParseError, looks_like_numbers, parse_entry
 from ..stats import summarize
 
 router = Router(name="entry")
 
 HINT = (
-    "Не понял, где тут давление. Пришли цифры так:\n"
-    "<code>120/80</code> · <code>120/80 68</code> · <code>130/85 вчера 21:30 после прогулки</code>\n\n"
+    "Не понял, где тут цифры. Вот как я понимаю:\n"
+    "· <code>120/80 68</code> — давление и пульс\n"
+    "· <code>120/80 68 сон 23:21-7:01</code> — заодно и сон\n"
+    "· <code>шаги 8200 пульс покоя 58</code> — вечером с браслета\n"
+    "· <code>вес 78,5</code> — когда встал на весы\n\n"
     "Все команды — /help"
 )
 
@@ -64,16 +67,31 @@ NOT_FOUND = "not_found"  # давления в тексте нет
 async def save_measurement(
     message: Message, text: str, db: Database, user: UserSettings, now: dt.datetime
 ) -> str:
-    """Разбирает текст и сохраняет измерение. Возвращает SAVED / INVALID / NOT_FOUND."""
+    """Разбирает текст и сохраняет запись. Возвращает SAVED / INVALID / NOT_FOUND.
+
+    В одном сообщении могут приехать и давление, и показатели здоровья
+    («120/80 68 сон 23:21-7:01»), и только показатели («шаги 8200»).
+    """
     try:
-        parsed = parse_measurement(text, now)
+        entry = parse_entry(text, now)
     except ParseError as exc:
         await message.answer(f"⚠️ {exc}")
         return INVALID
 
-    if parsed is None:
+    if not entry:
         return NOT_FOUND
 
+    saved_metrics = [
+        await db.set_metric(user.user_id, item.kind, entry.on_date, item.value, item.extra)
+        for item in entry.metrics
+    ]
+    metric_lines = [render_metric(metric, now.date()) for metric in saved_metrics]
+
+    if entry.measurement is None:
+        await message.answer("✅ Записал\n\n" + "\n".join(metric_lines))
+        return SAVED
+
+    parsed = entry.measurement
     measurement = await db.add_measurement(
         user_id=user.user_id,
         systolic=parsed.systolic,
@@ -84,6 +102,8 @@ async def save_measurement(
     )
 
     blocks = [render_measurement(measurement, now)]
+    if metric_lines:
+        blocks.append("\n".join(metric_lines))
 
     warning = alert(measurement.systolic, measurement.diastolic, measurement.pulse)
     if warning:
@@ -210,8 +230,9 @@ async def free_text(
         await message.answer(HINT)
     else:
         await message.answer(
-            "Это я записать не смогу — я про давление. "
-            "Пришли цифры, например <code>120/80</code>.\n\nВсе команды — /help"
+            "Это я записать не смогу. Я про давление и самочувствие: "
+            "<code>120/80 68</code>, <code>сон 23:21-7:01</code>, "
+            "<code>шаги 8200</code>, <code>вес 78,5</code>.\n\nВсе команды — /help"
         )
 
 

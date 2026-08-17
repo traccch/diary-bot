@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .db import Measurement, Reminder
+from .metrics import ALL_KINDS
 from .stats import PERIODS
 
 
@@ -38,7 +39,27 @@ def period_switch(active: str, prefix: str = "stats") -> InlineKeyboardMarkup:
         builder.button(text=f"{mark}{title}", callback_data=f"{prefix}:{key}")
     builder.adjust(4)
     if prefix == "stats":
-        builder.row(InlineKeyboardButton(text="📈 График", callback_data=f"chart:{active}"))
+        builder.row(
+            InlineKeyboardButton(text="📈 График", callback_data=f"chart:bp:{active}")
+        )
+    return builder.as_markup()
+
+
+def chart_switch(
+    active_kind: str, period: str, available: Sequence[str]
+) -> InlineKeyboardMarkup:
+    """Переключатель графиков: давление и те показатели, по которым есть данные."""
+    builder = InlineKeyboardBuilder()
+    buttons = [("bp", "🩺 Давление")]
+    buttons += [
+        (kind.key, f"{kind.icon} {kind.title}")
+        for kind in ALL_KINDS
+        if kind.key in available
+    ]
+    for key, title in buttons:
+        mark = "· " if key == active_kind else ""
+        builder.button(text=f"{mark}{title}", callback_data=f"chart:{key}:{period}")
+    builder.adjust(2)
     return builder.as_markup()
 
 

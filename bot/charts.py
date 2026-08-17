@@ -11,6 +11,7 @@ import importlib.util
 import io
 from typing import Optional, Sequence
 
+from . import metrics
 from .db import Measurement, UserSettings
 from .export import table_rows
 from .formatting import format_period
@@ -243,6 +244,94 @@ def pressure_png(
     return buffer.getvalue()
 
 
+# ------------------------------------------------ графики показателей здоровья
+
+#: У каждого показателя свой график, поэтому серия всегда одна и цвета
+#: между собой не соревнуются — берём разные, чтобы не путать вкладки.
+METRIC_COLORS = {
+    "sleep": "#4a3aa7",
+    "steps": "#1baf7a",
+    "resting_pulse": "#2a78d6",
+    "weight": "#eb6834",
+}
+
+
+def _tick_formatter(kind: metrics.MetricKind):
+    """Подписи оси по-русски: 7 400 вместо 7400 и 78,5 вместо 78.5."""
+    if kind.key == metrics.STEPS.key:
+        return lambda value, _: f"{value:,.0f}".replace(",", " ")
+    return lambda value, _: f"{value:g}".replace(".", ",")
+
+
+def metric_png(
+    kind: metrics.MetricKind,
+    values: Sequence[tuple[dt.date, float]],
+    subtitle: str = "",
+) -> bytes:
+    """График одного показателя: столбики для сна и шагов, линия для веса и пульса."""
+    if len(values) < 2:
+        raise ValueError("для графика нужно хотя бы два значения")
+
+    plt = _pyplot()
+    import matplotlib.dates as mdates
+    from matplotlib.ticker import FuncFormatter
+
+    dates = [date for date, _ in values]
+    heights = [metrics.chart_value(kind.key, value) for _, value in values]
+    color = METRIC_COLORS.get(kind.key, COLOR_DIA)
+    average = sum(heights) / len(heights)
+
+    figure = plt.figure(figsize=(9, 4.4), dpi=170)
+    # без эмодзи: в шрифтах matplotlib их глифов нет, вместо иконки будет квадрат
+    figure.suptitle(kind.title, x=0.02, ha="left", fontsize=13, fontweight="bold")
+    if subtitle:
+        figure.text(0.02, 0.905, subtitle, ha="left", fontsize=9, color=COLOR_MUTED)
+
+    grid = figure.add_gridspec(1, 1, left=0.08, right=0.84, bottom=0.14, top=0.82)
+    axes = figure.add_subplot(grid[0])
+
+    if kind.chart == "bars":
+        axes.bar(dates, heights, width=0.72, color=color, zorder=2)
+        axes.set_ylim(0, max(heights) * 1.15)
+    else:
+        axes.plot(
+            dates, heights, color=color, linewidth=1.8, marker="o", markersize=4, zorder=3
+        )
+
+    axes.axhline(average, color=COLOR_TARGET, linewidth=1, linestyle=(0, (4, 4)), zorder=1)
+    axes.annotate(
+        f"среднее {metrics.format_value(kind.key, sum(v for _, v in values) / len(values))}",
+        xy=(1, average),
+        xycoords=("axes fraction", "data"),
+        xytext=(5, -2),
+        textcoords="offset points",
+        ha="left",
+        va="center",
+        fontsize=7.5,
+        color=COLOR_MUTED,
+        annotation_clip=False,
+    )
+
+    axes.set_ylabel(kind.axis)
+    axes.yaxis.set_major_formatter(FuncFormatter(_tick_formatter(kind)))
+    _style_axes(axes)
+
+    span = max(1, (dates[-1] - dates[0]).days)
+    if span <= 14:
+        locator = mdates.DayLocator(interval=max(1, span // 7))
+    elif span <= 90:
+        locator = mdates.WeekdayLocator(byweekday=mdates.MO)
+    else:
+        locator = mdates.MonthLocator()
+    axes.xaxis.set_major_locator(locator)
+    axes.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
+
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", facecolor="white")
+    plt.close(figure)
+    return buffer.getvalue()
+
+
 # --------------------------------------------------------------------- PDF
 
 
@@ -286,6 +375,7 @@ def summary_page(
     user: UserSettings,
     now: dt.datetime,
     owner: Optional[str] = None,
+    health: Sequence[str] = (),
 ):
     """Титульная страница A4: шапка, цифры, график, примечание."""
     page = plt.figure(figsize=(8.27, 11.69), dpi=150)
@@ -298,7 +388,7 @@ def summary_page(
         subtitle = f"{owner} · {subtitle}"
     page.text(0.07, 0.928, subtitle, fontsize=9, color=COLOR_MUTED, va="top")
 
-    lines = _summary_lines(summary, user)
+    lines = _summary_lines(summary, user) + list(health)
     page.text(
         0.07, 0.90, "\n".join(lines),
         fontsize=9, family="DejaVu Sans Mono", va="top", linespacing=1.5,
@@ -325,6 +415,7 @@ def doctor_pdf(
     user: UserSettings,
     now: dt.datetime,
     owner: Optional[str] = None,
+    health: Sequence[str] = (),
 ) -> bytes:
     """Сводка для врача: титульная страница с графиком плюс таблица измерений."""
     plt = _pyplot()
@@ -332,7 +423,7 @@ def doctor_pdf(
 
     buffer = io.BytesIO()
     with PdfPages(buffer) as pdf:
-        page = summary_page(plt, measurements, summary, user, now, owner)
+        page = summary_page(plt, measurements, summary, user, now, owner, health)
         pdf.savefig(page)
         plt.close(page)
 

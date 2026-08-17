@@ -196,6 +196,65 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
             await self.send("130/85 70")
         self.assertIn("За 7 дней", self.bot.texts[-1])
 
+    # ------------------------------------------------- показатели здоровья
+
+    async def test_measurement_with_sleep_in_one_line(self):
+        answer = await self.send("120/80 68 сон 23:21-7:01")
+        self.assertIn("120/80", answer)
+        self.assertIn("7 ч 40 мин", answer)
+        self.assertIn("23:21", answer)
+
+        stored = await self.db.get_metric(USER_ID, "sleep", dt.date.today())
+        self.assertEqual(stored.value, 460)
+
+    async def test_metrics_without_pressure(self):
+        answer = await self.send("шаги 8200 пульс покоя 58")
+        self.assertIn("Записал", answer)
+        self.assertIn("8 200", answer)
+        self.assertIn("58", answer)
+        self.assertEqual(await self.db.count_measurements(USER_ID), 0)
+        self.assertEqual(await self.db.count_metrics(USER_ID), 2)
+
+    async def test_weight_replaces_the_same_day(self):
+        await self.send("вес 78,5")
+        await self.send("вес 78,2")
+        stored = await self.db.metrics_between(
+            USER_ID, "weight", dt.date.today(), dt.date.today()
+        )
+        self.assertEqual([item.value for item in stored], [78.2])
+
+    async def test_absurd_metric_is_explained(self):
+        self.assertIn("опечатку", await self.send("сон 30 часов"))
+        self.assertEqual(await self.db.count_metrics(USER_ID), 0)
+
+    async def test_health_block_appears_in_stats(self):
+        for offset in range(12):
+            date = dt.date.today() - dt.timedelta(days=offset)
+            await self.db.set_metric(USER_ID, "sleep", date, 330 if offset % 2 else 480)
+            await self.db.add_measurement(
+                USER_ID,
+                145 if offset % 2 else 128,
+                92 if offset % 2 else 82,
+                70,
+                dt.datetime.combine(date, dt.time(8, 0)),
+            )
+        report = await self.send("/stats")
+        self.assertIn("Здоровье", report)
+        self.assertIn("Сон", report)
+
+    async def test_metric_chart(self):
+        for offset in range(6):
+            await self.db.set_metric(
+                USER_ID, "steps", dt.date.today() - dt.timedelta(days=offset), 6000 + offset * 500
+            )
+        await self.click("chart:steps:month")
+        self.assertEqual(len(self.bot.photos()), 1)
+        self.assertIn("Шаги", self.bot.photos()[0].caption)
+
+    async def test_metric_chart_without_data(self):
+        await self.click("chart:weight:month")
+        self.assertIn("меньше двух записей", self.bot.texts[-1])
+
     # ------------------------------------------------------------ /add и FSM
 
     async def test_guided_add(self):

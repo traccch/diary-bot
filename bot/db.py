@@ -58,6 +58,20 @@ CREATE TABLE IF NOT EXISTS snoozes (
     user_id INTEGER NOT NULL,
     fire_at TEXT NOT NULL
 );
+
+-- Показатели здоровья: сон, шаги, пульс покоя, вес. Одно значение на день,
+-- повторная запись за тот же день заменяет предыдущую.
+CREATE TABLE IF NOT EXISTS metrics (
+    user_id    INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    on_date    TEXT NOT NULL,
+    value      REAL NOT NULL,
+    extra      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, kind, on_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_user_kind ON metrics(user_id, kind, on_date);
 """
 
 
@@ -82,6 +96,21 @@ class Measurement:
     @property
     def bp(self) -> str:
         return f"{self.systolic}/{self.diastolic}"
+
+
+@dataclass(frozen=True)
+class Metric:
+    """Показатель здоровья за день: сон, шаги, пульс покоя или вес.
+
+    `value` хранится в базовых единицах — сон в минутах, вес в килограммах.
+    `extra` нужен сну: там лежит «23:21-07:01», чтобы показать режим, а не
+    только длительность.
+    """
+
+    kind: str
+    on_date: dt.date
+    value: float
+    extra: str = ""
 
 
 @dataclass(frozen=True)
@@ -124,6 +153,15 @@ def _row_to_measurement(row: aiosqlite.Row) -> Measurement:
         pulse=row["pulse"],
         measured_at=parse_stamp(row["measured_at"]),
         note=row["note"],
+    )
+
+
+def _row_to_metric(row: aiosqlite.Row) -> Metric:
+    return Metric(
+        kind=row["kind"],
+        on_date=dt.date.fromisoformat(row["on_date"]),
+        value=row["value"],
+        extra=row["extra"],
     )
 
 
@@ -283,6 +321,68 @@ class Database:
     async def count_measurements(self, user_id: int) -> int:
         cur = await self.conn.execute(
             "SELECT COUNT(*) AS cnt FROM measurements WHERE user_id = ?", (user_id,)
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    # ------------------------------------------------- показатели здоровья
+
+    async def set_metric(
+        self, user_id: int, kind: str, on_date: dt.date, value: float, extra: str = ""
+    ) -> Metric:
+        """Записывает показатель за день, заменяя прежнее значение за ту же дату."""
+        await self.conn.execute(
+            "INSERT INTO metrics (user_id, kind, on_date, value, extra)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(user_id, kind, on_date) DO UPDATE SET"
+            " value = excluded.value, extra = excluded.extra",
+            (user_id, kind, on_date.isoformat(), float(value), extra),
+        )
+        await self.conn.commit()
+        return Metric(kind=kind, on_date=on_date, value=float(value), extra=extra)
+
+    async def get_metric(
+        self, user_id: int, kind: str, on_date: dt.date
+    ) -> Optional[Metric]:
+        cur = await self.conn.execute(
+            "SELECT kind, on_date, value, extra FROM metrics"
+            " WHERE user_id = ? AND kind = ? AND on_date = ?",
+            (user_id, kind, on_date.isoformat()),
+        )
+        row = await cur.fetchone()
+        return _row_to_metric(row) if row else None
+
+    async def metrics_between(
+        self, user_id: int, kind: str, start: dt.date, end: dt.date
+    ) -> list[Metric]:
+        cur = await self.conn.execute(
+            "SELECT kind, on_date, value, extra FROM metrics"
+            " WHERE user_id = ? AND kind = ? AND on_date BETWEEN ? AND ?"
+            " ORDER BY on_date",
+            (user_id, kind, start.isoformat(), end.isoformat()),
+        )
+        return [_row_to_metric(row) for row in await cur.fetchall()]
+
+    async def last_metric(self, user_id: int, kind: str) -> Optional[Metric]:
+        cur = await self.conn.execute(
+            "SELECT kind, on_date, value, extra FROM metrics"
+            " WHERE user_id = ? AND kind = ? ORDER BY on_date DESC LIMIT 1",
+            (user_id, kind),
+        )
+        row = await cur.fetchone()
+        return _row_to_metric(row) if row else None
+
+    async def delete_metric(self, user_id: int, kind: str, on_date: dt.date) -> bool:
+        cur = await self.conn.execute(
+            "DELETE FROM metrics WHERE user_id = ? AND kind = ? AND on_date = ?",
+            (user_id, kind, on_date.isoformat()),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def count_metrics(self, user_id: int) -> int:
+        cur = await self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM metrics WHERE user_id = ?", (user_id,)
         )
         row = await cur.fetchone()
         return row["cnt"] if row else 0

@@ -14,7 +14,13 @@ from ..db import Database, UserSettings
 from ..export import csv_bytes, text_report
 from ..formatting import format_period, measurements_word
 from ..keyboards import export_menu
-from ..stats import PERIOD_TITLES, period_range, summarize
+from ..stats import (
+    PERIOD_TITLES,
+    collect_health,
+    health_lines_plain,
+    period_range,
+    summarize,
+)
 
 router = Router(name="export")
 logger = logging.getLogger(__name__)
@@ -54,6 +60,9 @@ async def cb_export(
     await callback.answer("Готовлю файл…")
     summary = summarize(measurements, user.target_sys, user.target_dia)
     assert summary is not None
+    health = health_lines_plain(
+        *await collect_health(db, user, measurements, start, end)
+    )
     stamp = f"{summary.start:%Y%m%d}-{summary.end:%Y%m%d}"
     caption = (
         f"🩺 {format_period(summary.start, summary.end)} · "
@@ -71,7 +80,7 @@ async def cb_export(
 
     if charts.available():
         try:
-            payload = charts.doctor_pdf(measurements, summary, user, now)
+            payload = charts.doctor_pdf(measurements, summary, user, now, health=health)
             await callback.message.answer_document(
                 BufferedInputFile(payload, filename=f"pressure-{stamp}.pdf"),
                 caption=f"{caption}\n<i>{PERIOD_TITLES.get(period, '')}</i>",
@@ -82,7 +91,8 @@ async def cb_export(
 
     await callback.message.answer_document(
         BufferedInputFile(
-            text_report(measurements, summary, user, now), filename=f"pressure-{stamp}.txt"
+            text_report(measurements, summary, user, now, health),
+            filename=f"pressure-{stamp}.txt",
         ),
         caption=f"{caption}\n<i>PDF собрать не вышло — прислал текстом.</i>",
     )

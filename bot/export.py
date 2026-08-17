@@ -75,6 +75,7 @@ def text_report(
     summary: Summary,
     user: UserSettings,
     now: dt.datetime,
+    health: Sequence[str] = (),
 ) -> bytes:
     """То же, что PDF, но обычным текстом — если графики недоступны."""
     lines = [
@@ -104,6 +105,8 @@ def text_report(
             lines.append(
                 f"    {part.title:<10} n={part.count:<4} {part.avg_sys}/{part.avg_dia}{pulse}"
             )
+
+    lines.extend(health)
 
     lines.append("")
     lines.append(f"ИЗМЕРЕНИЯ ({summary.count} {measurements_word(summary.count)})")
