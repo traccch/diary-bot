@@ -7,7 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot.db import Database
+import aiosqlite
+
+from bot.db import (
+    DEFAULT_TARGET_SYS,
+    SCHEMA,
+    Database,
+    expected_columns,
+)
 
 USER_ID = 777
 NOW = dt.datetime(2026, 8, 17, 9, 0)
@@ -157,3 +164,69 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MigrationTest(unittest.IsolatedAsyncioTestCase):
+    """База, созданная прошлой версией бота, должна открываться и дополняться."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self._tmp.name) / "old.db")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    async def open_db(self) -> Database:
+        db = Database(self.path, "Europe/Moscow")
+        await db.connect()
+        return db
+
+    def test_schema_is_parsed_into_columns(self):
+        tables = expected_columns(SCHEMA)
+        self.assertIn("users", tables)
+        self.assertEqual(
+            [name for name, _ in tables["users"]],
+            ["user_id", "tz", "target_sys", "target_dia", "skip_if_measured", "created_at"],
+        )
+        # ограничения таблицы колонками не считаются
+        self.assertNotIn("UNIQUE", [name.upper() for name, _ in tables["reminders"]])
+        self.assertNotIn("PRIMARY", [name.upper() for name, _ in tables["metrics"]])
+
+    async def test_missing_column_is_added(self):
+        legacy = await aiosqlite.connect(self.path)
+        await legacy.executescript(
+            """
+            CREATE TABLE users (
+                user_id    INTEGER PRIMARY KEY,
+                tz         TEXT NOT NULL DEFAULT 'Europe/Moscow',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO users (user_id, tz) VALUES (777, 'Asia/Almaty');
+            """
+        )
+        await legacy.commit()
+        await legacy.close()
+
+        db = await self.open_db()
+        try:
+            user = await db.ensure_user(USER_ID)
+            self.assertEqual(user.tz, "Asia/Almaty")  # старые данные на месте
+            self.assertEqual(user.target_sys, DEFAULT_TARGET_SYS)
+            self.assertTrue(user.skip_if_measured)
+
+            # и запись в дополненную таблицу проходит
+            await db.set_target(USER_ID, 130, 80)
+            self.assertEqual((await db.ensure_user(USER_ID)).target_sys, 130)
+        finally:
+            await db.close()
+
+    async def test_migration_is_idempotent(self):
+        first = await self.open_db()
+        await first.ensure_user(USER_ID)
+        await first.close()
+
+        second = await self.open_db()
+        try:
+            self.assertEqual((await second.ensure_user(USER_ID)).user_id, USER_ID)
+        finally:
+            await second.close()
