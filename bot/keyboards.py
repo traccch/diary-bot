@@ -69,8 +69,20 @@ def export_menu() -> InlineKeyboardMarkup:
     builder.button(text="📄 PDF · 3 месяца", callback_data="exp:pdf:quarter")
     builder.button(text="📄 PDF · всё время", callback_data="exp:pdf:all")
     builder.button(text="📊 CSV · всё время", callback_data="exp:csv:all")
+    builder.button(text="🤖 JSON для ИИ", callback_data="exp:json:all")
     builder.adjust(2)
     return builder.as_markup()
+
+
+def confirm_import() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Применить", callback_data="import:apply"),
+                InlineKeyboardButton(text="✖️ Отмена", callback_data="import:cancel"),
+            ]
+        ]
+    )
 
 
 def reminder_actions() -> InlineKeyboardMarkup:

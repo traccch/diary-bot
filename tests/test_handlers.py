@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 import tempfile
 import unittest
@@ -25,7 +26,15 @@ from aiogram.methods import (
     TelegramMethod,
 )
 from aiogram.methods.base import TelegramType
-from aiogram.types import CallbackQuery, Chat, Message, Update, User, Voice
+from aiogram.types import (
+    CallbackQuery,
+    Chat,
+    Document,
+    Message,
+    Update,
+    User,
+    Voice,
+)
 
 from bot.ai import AiMeasurement, AiMetric, AiResult
 from bot.db import Database
@@ -48,6 +57,8 @@ class RecordingBot(Bot):
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         self.calls: list[TelegramMethod[Any]] = []
+        #: что отдать при скачивании файла — тесты подменяют перед отправкой
+        self.file_payload = b"OggS-fake-voice"
 
     async def __call__(self, method: TelegramMethod[TelegramType], request_timeout=None):
         self.calls.append(method)
@@ -64,7 +75,7 @@ class RecordingBot(Bot):
     async def download(self, file, destination=None, **kwargs):
         """Вместо похода в Telegram отдаём заранее известные байты."""
         if destination is not None:
-            destination.write(b"OggS-fake-voice")
+            destination.write(self.file_payload)
             return destination
         return None
 
@@ -525,7 +536,7 @@ class AiTest(BotTestCase):
         self.dp["ai"] = ai
 
         answer = await self.send_voice()
-        self.assertEqual(ai.audio_calls, [b"OggS-fake-voice"])
+        self.assertEqual(ai.audio_calls, [self.bot.file_payload])
         self.assertIn("Услышал", answer)
         self.assertEqual((await self.db.last_measurements(USER_ID))[0].systolic, 120)
 
@@ -553,3 +564,104 @@ class AiTest(BotTestCase):
 
         self.dp["ai"] = FakeAi(insight_text="текст", available=True)
         self.assertIn("нечего разбирать", await self.send("/insight"))
+
+
+class TransferTest(BotTestCase):
+    """Круг «выгрузил → показал ИИ → залил правки»."""
+
+    async def send_document(self, payload: bytes, filename: str = "pressure.json") -> str:
+        self.bot.file_payload = payload
+        self._update_id += 1
+        message = make_message("").model_copy(
+            update={
+                "text": None,
+                "document": Document(
+                    file_id=f"doc-{self._update_id}",
+                    file_unique_id=f"u{self._update_id}",
+                    file_name=filename,
+                    file_size=len(payload),
+                ),
+            }
+        )
+        await self.dp.feed_update(self.bot, Update(update_id=self._update_id, message=message))
+        return self.bot.last_shown
+
+    async def exported_json(self) -> bytes:
+        await self.send("/export")
+        await self.click("exp:json:all")
+        return self.bot.documents()[-1].document.data
+
+    async def test_json_export_has_context(self):
+        await self.send("120/80 68")
+        await self.send("сон 7ч30м")
+
+        data = json.loads((await self.exported_json()).decode("utf-8"))
+        self.assertEqual(data["format"], "pressure-export")
+        self.assertEqual(data["target"], {"systolic": 135, "diastolic": 85})
+        self.assertEqual(data["measurements"][0]["systolic"], 120)
+        self.assertEqual(data["metrics"][0]["value"], 7.5)
+
+    async def test_import_fixes_a_typo(self):
+        await self.send("180/85 72")  # промахнулись по кнопке: хотели 130
+        raw = await self.exported_json()
+
+        data = json.loads(raw.decode("utf-8"))
+        data["measurements"][0]["systolic"] = 130
+        answer = await self.send_document(json.dumps(data).encode("utf-8"))
+
+        self.assertIn("Что изменится", answer)
+        self.assertIn("180/85", answer)
+        # до подтверждения дневник не тронут
+        self.assertEqual((await self.db.last_measurements(USER_ID))[0].systolic, 180)
+
+        await self.click("import:apply")
+        self.assertEqual((await self.db.last_measurements(USER_ID))[0].systolic, 130)
+        self.assertIn("Применил", self.bot.last_shown)
+
+    async def test_import_can_be_cancelled(self):
+        await self.send("120/80")
+        data = json.loads((await self.exported_json()).decode("utf-8"))
+        data["measurements"][0]["systolic"] = 200
+
+        await self.send_document(json.dumps(data).encode("utf-8"))
+        await self.click("import:cancel")
+
+        self.assertEqual((await self.db.last_measurements(USER_ID))[0].systolic, 120)
+        self.assertIn("Ничего не изменилось", self.bot.last_shown)
+
+    async def test_import_adds_and_deletes(self):
+        await self.send("120/80")
+        data = json.loads((await self.exported_json()).decode("utf-8"))
+        data["measurements"][0]["delete"] = True
+        data["measurements"].append(
+            {"measured_at": "2026-08-16 08:00", "systolic": 118, "diastolic": 76, "pulse": 64}
+        )
+
+        await self.send_document(json.dumps(data).encode("utf-8"))
+        await self.click("import:apply")
+
+        stored = await self.db.last_measurements(USER_ID)
+        self.assertEqual(len(stored), 1)
+        self.assertEqual((stored[0].systolic, stored[0].pulse), (118, 64))
+
+    async def test_unchanged_file_says_so(self):
+        await self.send("120/80 68")
+        self.assertIn("Расхождений", await self.send_document(await self.exported_json()))
+
+    async def test_broken_file_is_explained(self):
+        await self.send("120/80")
+        self.assertIn("не JSON", await self.send_document(b"{ broken"))
+        self.assertIn(".json", await self.send_document(b"date;bp", filename="pressure.csv"))
+
+    async def test_edit_command(self):
+        await self.send("180/85 72")
+        stored = (await self.db.last_measurements(USER_ID))[0]
+
+        self.assertIn("Исправил", await self.send(f"/edit {stored.id} 130/85 70"))
+        fixed = await self.db.get_measurement(USER_ID, stored.id)
+        self.assertEqual((fixed.systolic, fixed.diastolic, fixed.pulse), (130, 85, 70))
+
+    async def test_edit_rejects_nonsense(self):
+        self.assertIn("Формат", await self.send("/edit"))
+        self.assertIn("Не понял", await self.send("/edit 1 абв"))
+        self.assertIn("Такой записи нет", await self.send("/edit 999 120/80"))

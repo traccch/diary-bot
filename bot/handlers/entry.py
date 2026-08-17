@@ -16,7 +16,12 @@ from ..classify import alert
 from ..db import Database, UserSettings
 from ..formatting import esc, measurements_word, render_line, render_measurement, render_metric
 from ..keyboards import delete_buttons, measurement_actions, skip_note
-from ..parsing import ParseError, looks_like_numbers, parse_entry
+from ..parsing import (
+    ParseError,
+    looks_like_numbers,
+    parse_entry,
+    parse_measurement,
+)
 from ..stats import summarize
 from .ai_common import save_ai_entry
 
@@ -205,6 +210,51 @@ async def cmd_undo(message: Message, db: Database, user: UserSettings) -> None:
     measurement = recent[0]
     await db.delete_measurement(user.user_id, measurement.id)
     await message.answer(f"🗑 Удалил измерение {measurement.bp}.")
+
+
+@router.message(Command("edit"))
+async def cmd_edit(
+    message: Message, command: CommandObject, db: Database, user: UserSettings,
+    now: dt.datetime,
+) -> None:
+    """Правка уже записанного измерения: /edit 42 120/80 68."""
+    parts = (command.args or "").strip().lstrip("#").split(maxsplit=1)
+    if not parts or not parts[0].isdigit():
+        await message.answer(
+            "Формат: <code>/edit 42 120/80 68</code> — заменит цифры у записи #42.\n"
+            "Номер записи виден в /last."
+        )
+        return
+
+    measurement_id = int(parts[0])
+    try:
+        parsed = parse_measurement(parts[1], now) if len(parts) > 1 else None
+    except ParseError as exc:
+        await message.answer(f"⚠️ {exc}")
+        return
+
+    if parsed is None:
+        await message.answer(
+            "Не понял новые цифры. Например: <code>/edit 42 120/80 68</code>"
+        )
+        return
+
+    updated = await db.update_measurement(
+        user.user_id,
+        measurement_id,
+        systolic=parsed.systolic,
+        diastolic=parsed.diastolic,
+        pulse=parsed.pulse,
+        note=parsed.note or None,
+    )
+    if updated is None:
+        await message.answer("Такой записи нет. Список — /last")
+        return
+
+    await message.answer(
+        "✏️ Исправил:\n\n" + render_measurement(updated, now),
+        reply_markup=measurement_actions(updated),
+    )
 
 
 @router.message(Command("del"))

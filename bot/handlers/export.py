@@ -9,7 +9,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .. import charts
+from .. import charts, metrics, transfer
 from ..db import Database, UserSettings
 from ..export import csv_bytes, text_report
 from ..formatting import format_period, measurements_word
@@ -29,7 +29,9 @@ MENU = (
     "📤 <b>Выгрузка</b>\n\n"
     "PDF — сводка, график и таблица всех измерений: то, что удобно распечатать "
     "и отдать кардиологу.\n"
-    "CSV — та же таблица для Excel.\n\n"
+    "CSV — та же таблица для Excel.\n"
+    "JSON — дневник для проверки внешним ИИ: правки заливаются обратно "
+    "через /import.\n\n"
     "Что прислать?"
 )
 
@@ -70,6 +72,31 @@ async def cb_export(
         f"Среднее {summary.avg_sys}/{summary.avg_dia}"
         + (f" · ♥ {summary.avg_pulse}" if summary.avg_pulse else "")
     )
+
+    if kind == "json":
+        health_metrics = []
+        for metric_kind in metrics.ALL_KINDS:
+            health_metrics.extend(
+                await db.metrics_between(user.user_id, metric_kind.key, start.date(), end.date())
+            )
+        payload = transfer.dump(
+            measurements,
+            health_metrics,
+            (user.target_sys, user.target_dia),
+            user.tz,
+            now,
+        )
+        await callback.message.answer_document(
+            BufferedInputFile(payload, filename=f"pressure-{stamp}.json"),
+            caption=(
+                f"🤖 {summary.count} {measurements_word(summary.count)} со всем "
+                "контекстом: целевые значения, показатели здоровья.\n\n"
+                "Отправь файл любому ИИ и попроси проверить записи на опечатки. "
+                "Правленый файл пришли мне обратно — покажу, что изменится, и "
+                "применю после подтверждения. Подробнее — /import"
+            ),
+        )
+        return
 
     if kind == "csv":
         await callback.message.answer_document(

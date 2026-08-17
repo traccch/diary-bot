@@ -31,7 +31,8 @@ COMMANDS = [
     BotCommand(command="undo", description="Удалить последнее"),
     BotCommand(command="remind", description="Напоминания"),
     BotCommand(command="reminders", description="Список напоминаний"),
-    BotCommand(command="export", description="Выгрузка для врача"),
+    BotCommand(command="export", description="Выгрузка: PDF, CSV, JSON"),
+    BotCommand(command="import", description="Залить правки от ИИ"),
     BotCommand(command="target", description="Целевые значения"),
     BotCommand(command="help", description="Как пользоваться"),
 ]

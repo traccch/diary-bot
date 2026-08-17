@@ -347,6 +347,46 @@ class Database:
         )
         return [_row_to_measurement(row) for row in await cur.fetchall()]
 
+    async def update_measurement(
+        self,
+        user_id: int,
+        measurement_id: int,
+        systolic: Optional[int] = None,
+        diastolic: Optional[int] = None,
+        pulse: Optional[int] = None,
+        measured_at: Optional[dt.datetime] = None,
+        note: Optional[str] = None,
+    ) -> Optional[Measurement]:
+        """Меняет переданные поля измерения. Ничего не передали — не трогаем."""
+        fields: list[str] = []
+        values: list[object] = []
+        for column, value in (
+            ("systolic", systolic),
+            ("diastolic", diastolic),
+            ("pulse", pulse),
+        ):
+            if value is not None:
+                fields.append(f"{column} = ?")
+                values.append(value)
+        if measured_at is not None:
+            fields.append("measured_at = ?")
+            values.append(format_stamp(measured_at))
+        if note is not None:
+            fields.append("note = ?")
+            values.append(note.strip())
+        if not fields:
+            return await self.get_measurement(user_id, measurement_id)
+
+        values.extend([user_id, measurement_id])
+        cur = await self.conn.execute(
+            f"UPDATE measurements SET {', '.join(fields)} WHERE user_id = ? AND id = ?",
+            values,
+        )
+        await self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return await self.get_measurement(user_id, measurement_id)
+
     async def delete_measurement(self, user_id: int, measurement_id: int) -> bool:
         cur = await self.conn.execute(
             "DELETE FROM measurements WHERE user_id = ? AND id = ?", (user_id, measurement_id)
