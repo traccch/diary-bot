@@ -169,15 +169,18 @@ def _draw(
 
     for level in (user.target_sys, user.target_dia):
         top.axhline(level, color=COLOR_TARGET, linewidth=1, linestyle=(0, (4, 4)), zorder=1)
+    # подпись цели живёт в поле справа от графика, чтобы не наезжать на данные
     top.annotate(
         f"цель {user.target_sys}/{user.target_dia}",
         xy=(1, user.target_sys),
         xycoords=("axes fraction", "data"),
-        xytext=(-2, 3),
+        xytext=(5, -2),
         textcoords="offset points",
-        ha="right",
+        ha="left",
+        va="center",
         fontsize=7.5,
         color=COLOR_MUTED,
+        annotation_clip=False,
     )
 
     top.set_ylabel("мм рт. ст.")
@@ -232,7 +235,7 @@ def pressure_png(
         color=COLOR_MUTED,
     )
 
-    _draw(figure, measurements, user, rect=(0.08, 0.97, 0.09, 0.86))
+    _draw(figure, measurements, user, rect=(0.08, 0.90, 0.09, 0.86))
 
     buffer = io.BytesIO()
     figure.savefig(buffer, format="png", facecolor="white")
@@ -323,7 +326,7 @@ def summary_page(
     if len(measurements) >= 2:
         # график начинается там, где закончился текст: строк бывает от 12 до 30
         top = min(0.66, max(0.36, 0.86 - len(lines) * 0.0165))
-        _draw(page, measurements, user, rect=(0.10, 0.95, 0.11, top))
+        _draw(page, measurements, user, rect=(0.10, 0.87, 0.11, top))
 
     page.text(
         0.07, 0.045,
