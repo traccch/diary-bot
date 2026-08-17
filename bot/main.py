@@ -13,6 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from . import charts
+from .ai import AiClient
 from .config import load_config
 from .db import Database
 from .handlers import build_router
@@ -25,6 +26,7 @@ COMMANDS = [
     BotCommand(command="add", description="Записать измерение по шагам"),
     BotCommand(command="stats", description="Сводка по давлению"),
     BotCommand(command="chart", description="График"),
+    BotCommand(command="insight", description="Разбор дневника словами"),
     BotCommand(command="last", description="Последние измерения"),
     BotCommand(command="undo", description="Удалить последнее"),
     BotCommand(command="remind", description="Напоминания"),
@@ -51,6 +53,7 @@ async def run() -> None:
     )
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher["db"] = db
+    dispatcher["ai"] = AiClient(config.ai_api_key, config.ai_model, config.ai_timeout)
 
     middleware = UserMiddleware()
     dispatcher.message.middleware(middleware)

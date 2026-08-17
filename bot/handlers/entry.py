@@ -11,12 +11,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from ..ai import AiClient
 from ..classify import alert
 from ..db import Database, UserSettings
 from ..formatting import esc, measurements_word, render_line, render_measurement, render_metric
 from ..keyboards import delete_buttons, measurement_actions, skip_note
 from ..parsing import ParseError, looks_like_numbers, parse_entry
 from ..stats import summarize
+from .ai_common import save_ai_entry
 
 router = Router(name="entry")
 
@@ -221,11 +223,20 @@ async def cmd_del(
 
 @router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def free_text(
-    message: Message, db: Database, user: UserSettings, now: dt.datetime
+    message: Message, db: Database, user: UserSettings, now: dt.datetime, ai: AiClient
 ) -> None:
     text = message.text or ""
     if await save_measurement(message, text, db, user, now) != NOT_FOUND:
         return
+
+    # Обычный разбор не нашёл цифр — может быть, они названы словами
+    # («давление сто тридцать на восемьдесят»). Без ключа шаг пропускается.
+    if ai.available():
+        result = await ai.extract_from_text(text, now)
+        if result:
+            await message.answer(await save_ai_entry(db, user, now, result))
+            return
+
     if looks_like_numbers(text):
         await message.answer(HINT)
     else:

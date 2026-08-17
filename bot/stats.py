@@ -598,3 +598,54 @@ def render_peaks(summary: Summary, now: dt.datetime) -> list[str]:
             f"<b>{measurement.bp}</b>{note}"
         )
     return lines
+
+
+async def insight_summary(db: Database, user: UserSettings, now: dt.datetime) -> str:
+    """Голые цифры дневника для модели: без разметки и без интерпретаций."""
+    start, end = period_range("month", now)
+    measurements = await db.measurements_between(user.user_id, start, end)
+    if not measurements:
+        return ""
+
+    summary = summarize(measurements, user.target_sys, user.target_dia)
+    if summary is None:
+        return ""
+    lines = [
+        f"Период: {start:%d.%m.%Y} — {end:%d.%m.%Y}",
+        f"Измерений: {summary.count} за {summary.days_covered} дней",
+        f"Целевые значения пользователя: ниже {user.target_sys}/{user.target_dia}",
+        f"Среднее: {summary.avg_sys}/{summary.avg_dia}"
+        + (f", пульс {summary.avg_pulse}" if summary.avg_pulse else ""),
+        f"Разброс: от {summary.min_sys}/{summary.min_dia} до "
+        f"{summary.max_sys}/{summary.max_dia}",
+        f"В целевом диапазоне: {summary.in_target} из {summary.count}",
+    ]
+    if summary.crisis:
+        lines.append(f"Значений 180/120 и выше: {summary.crisis}")
+
+    lines.append("")
+    lines.append("По категориям ESC/ESH:")
+    for grade, count in summary.grades:
+        lines.append(f"- {grade.title}: {count}")
+
+    if summary.parts:
+        lines.append("")
+        lines.append("По времени суток:")
+        for part in summary.parts:
+            lines.append(
+                f"- {part.title}: {part.avg_sys}/{part.avg_dia} ({part.count} измерений)"
+            )
+
+    if summary.days:
+        lines.append("")
+        lines.append("Среднее верхнее по дням:")
+        lines.extend(f"- {day.date:%d.%m}: {day.avg_sys}/{day.avg_dia}" for day in summary.days)
+
+    health = health_lines_plain(
+        *await collect_health(db, user, measurements, start, end)
+    )
+    if health:
+        lines.append("")
+        lines.extend(health)
+
+    return "\n".join(lines)

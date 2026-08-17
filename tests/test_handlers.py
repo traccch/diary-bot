@@ -25,8 +25,9 @@ from aiogram.methods import (
     TelegramMethod,
 )
 from aiogram.methods.base import TelegramType
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.types import CallbackQuery, Chat, Message, Update, User, Voice
 
+from bot.ai import AiMeasurement, AiMetric, AiResult
 from bot.db import Database
 from bot.handlers import build_router
 from bot.middlewares import UserMiddleware
@@ -51,12 +52,21 @@ class RecordingBot(Bot):
     async def __call__(self, method: TelegramMethod[TelegramType], request_timeout=None):
         self.calls.append(method)
         if isinstance(method, (SendMessage, SendDocument, SendPhoto)):
+            # as_(self) — иначе у ответа нет бота и .edit_text() на нём падает,
+            # хотя в бою aiogram привязывает его сам
             return Message(
                 message_id=len(self.calls),
                 date=dt.datetime.now(dt.timezone.utc),
                 chat=Chat(id=CHAT_ID, type="private"),
-            )
+            ).as_(self)
         return True
+
+    async def download(self, file, destination=None, **kwargs):
+        """Вместо похода в Telegram отдаём заранее известные байты."""
+        if destination is not None:
+            destination.write(b"OggS-fake-voice")
+            return destination
+        return None
 
     @property
     def texts(self) -> list[str]:
@@ -65,6 +75,15 @@ class RecordingBot(Bot):
             for call in self.calls
             if isinstance(call, SendMessage) and call.text is not None
         ]
+
+    @property
+    def last_shown(self) -> str:
+        """Последний текст, который увидел пользователь: отправленный или
+        вписанный поверх прежнего (хендлеры с «Слушаю…» правят своё сообщение)."""
+        for call in reversed(self.calls):
+            if isinstance(call, (SendMessage, EditMessageText)) and call.text:
+                return call.text
+        return ""
 
     @property
     def edits(self) -> list[str]:
@@ -80,6 +99,48 @@ class RecordingBot(Bot):
 
     def photos(self) -> list[SendPhoto]:
         return [call for call in self.calls if isinstance(call, SendPhoto)]
+
+
+class FakeAi:
+    """ИИ-клиент без сети: отдаёт заготовленный ответ и запоминает вызовы."""
+
+    def __init__(self, result: AiResult | None = None, insight_text: str | None = None,
+                 available: bool = False) -> None:
+        self._result = result
+        self._insight = insight_text
+        self._available = available
+        self.text_calls: list[str] = []
+        self.audio_calls: list[bytes] = []
+
+    def available(self) -> bool:
+        return self._available
+
+    async def extract_from_text(self, text, now):
+        self.text_calls.append(text)
+        return self._result
+
+    async def extract_from_audio(self, audio, mime, now):
+        self.audio_calls.append(audio)
+        return self._result
+
+    async def insight(self, summary):
+        return self._insight
+
+
+def ai_result(
+    measurements: tuple = (), health: tuple = (), transcript: str = ""
+) -> AiResult:
+    now = dt.datetime.now().replace(second=0, microsecond=0)
+    return AiResult(
+        transcript=transcript,
+        measurements=tuple(
+            AiMeasurement(systolic=s, diastolic=d, pulse=p, measured_at=now, note="")
+            for s, d, p in measurements
+        ),
+        metrics=tuple(
+            AiMetric(kind=kind, value=value, on_date=now.date()) for kind, value in health
+        ),
+    )
 
 
 _dispatcher: Dispatcher | None = None
@@ -108,7 +169,9 @@ def make_message(text: str, message_id: int = 1) -> Message:
     )
 
 
-class HandlersTest(unittest.IsolatedAsyncioTestCase):
+class BotTestCase(unittest.IsolatedAsyncioTestCase):
+    """Общая обвязка: своя база, общий диспетчер, бот-заглушка."""
+
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
@@ -116,6 +179,8 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
 
         self.dp = get_dispatcher()
         self.dp["db"] = self.db
+        self.ai = FakeAi()
+        self.dp["ai"] = self.ai
 
         self.bot = RecordingBot()
         self._update_id = 0
@@ -153,6 +218,8 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+
+class HandlersTest(BotTestCase):
     # ------------------------------------------------------------- базовое
 
     async def test_start_and_help(self):
@@ -403,3 +470,86 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AiTest(BotTestCase):
+    """ИИ-пути: разбор словами, голос и /insight — всё с заглушкой вместо сети."""
+
+    async def send_voice(self) -> str:
+        self._update_id += 1
+        message = make_message("").model_copy(
+            update={
+                "text": None,
+                "voice": Voice(
+                    file_id="voice-1",
+                    file_unique_id="u1",
+                    duration=4,
+                    mime_type="audio/ogg",
+                    file_size=2048,
+                ),
+            }
+        )
+        await self.dp.feed_update(self.bot, Update(update_id=self._update_id, message=message))
+        return self.bot.last_shown
+
+    async def test_ai_is_not_asked_when_numbers_are_clear(self):
+        ai = FakeAi(ai_result(measurements=((190, 120, None),)), available=True)
+        self.dp["ai"] = ai
+
+        await self.send("120/80 68")
+        self.assertEqual(ai.text_calls, [], "обычный разбор справился сам")
+        self.assertEqual((await self.db.last_measurements(USER_ID))[0].systolic, 120)
+
+    async def test_ai_rescues_words(self):
+        self.dp["ai"] = FakeAi(ai_result(measurements=((130, 85, 70),)), available=True)
+        await self.send("давление сто тридцать на восемьдесят пять, пульс семьдесят")
+
+        measurement = (await self.db.last_measurements(USER_ID))[0]
+        self.assertEqual((measurement.systolic, measurement.diastolic), (130, 85))
+        self.assertEqual(measurement.pulse, 70)
+
+    async def test_ai_silence_falls_back_to_hint(self):
+        self.dp["ai"] = FakeAi(None, available=True)
+        answer = await self.send("что-то совсем непонятное")
+        self.assertIn("записать не смогу", answer)
+        self.assertEqual(await self.db.last_measurements(USER_ID), [])
+
+    async def test_voice_without_key(self):
+        self.assertIn("ключа нет", await self.send_voice())
+
+    async def test_voice_records_measurement(self):
+        ai = FakeAi(
+            ai_result(measurements=((120, 80, 66),), transcript="сто двадцать на восемьдесят"),
+            available=True,
+        )
+        self.dp["ai"] = ai
+
+        answer = await self.send_voice()
+        self.assertEqual(ai.audio_calls, [b"OggS-fake-voice"])
+        self.assertIn("Услышал", answer)
+        self.assertEqual((await self.db.last_measurements(USER_ID))[0].systolic, 120)
+
+    async def test_voice_records_metrics(self):
+        self.dp["ai"] = FakeAi(ai_result(health=(("steps", 8200),)), available=True)
+        await self.send_voice()
+        self.assertEqual(len(await self.db.last_measurements(USER_ID)), 0)
+        self.assertIsNotNone(await self.db.get_metric(USER_ID, "steps", dt.date.today()))
+
+    async def test_voice_with_nothing_recognised(self):
+        self.dp["ai"] = FakeAi(ai_result(), available=True)
+        self.assertIn("не разобрал", (await self.send_voice()).lower())
+
+    async def test_insight(self):
+        self.dp["ai"] = FakeAi(insight_text="Утром выше, чем вечером.", available=True)
+        await self.send("120/80 68")
+        await self.send("135/88 72")
+
+        await self.send("/insight")
+        self.assertIn("Утром выше", self.bot.last_shown)
+        self.assertIn("не заключение врача", self.bot.last_shown)
+
+    async def test_insight_needs_key_and_data(self):
+        self.assertIn("ключа нет", await self.send("/insight"))
+
+        self.dp["ai"] = FakeAi(insight_text="текст", available=True)
+        self.assertIn("нечего разбирать", await self.send("/insight"))

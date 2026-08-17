@@ -11,10 +11,18 @@ from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from .. import charts, metrics
+from ..ai import AiClient
 from ..db import Database, UserSettings
-from ..formatting import format_period, measurements_word, plural
+from ..formatting import esc, format_period, measurements_word, plural
 from ..keyboards import chart_switch, period_switch
-from ..stats import PERIOD_DAYS, PERIOD_TITLES, build_report, period_range
+from ..stats import (
+    PERIOD_DAYS,
+    PERIOD_TITLES,
+    build_report,
+    insight_summary,
+    period_range,
+)
+from .ai_common import NO_AI
 
 router = Router(name="reports")
 logger = logging.getLogger(__name__)
@@ -119,6 +127,35 @@ async def cmd_stats(
 ) -> None:
     text = await build_report(db, user, DEFAULT_PERIOD, now)
     await message.answer(text, reply_markup=period_switch(DEFAULT_PERIOD))
+
+
+@router.message(Command("insight", "разбор"))
+async def cmd_insight(
+    message: Message, db: Database, user: UserSettings, now: dt.datetime, ai: AiClient
+) -> None:
+    if not ai.available():
+        await message.answer(NO_AI)
+        return
+
+    summary = await insight_summary(db, user, now)
+    if not summary:
+        await message.answer(
+            "Пока нечего разбирать — за последний месяц измерений нет."
+        )
+        return
+
+    note = await message.answer("🧠 Читаю дневник…")
+    text = await ai.insight(summary)
+    if text is None:
+        await note.edit_text(
+            "Сервис ИИ не ответил. Попробуй позже — /stats работает всегда."
+        )
+        return
+
+    await note.edit_text(
+        f"🧠 <b>Что видно в дневнике</b>\n\n{esc(text)}\n\n"
+        "<i>Это пересказ цифр, а не заключение врача.</i>"
+    )
 
 
 @router.message(Command("chart", "graph"))
