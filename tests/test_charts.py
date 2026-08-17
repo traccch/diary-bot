@@ -8,7 +8,7 @@ import unittest
 
 from bot import charts
 from bot.db import Measurement, UserSettings
-from bot.export import csv_bytes, text_report
+from bot.export import csv_bytes, table_rows, text_report
 from bot.stats import summarize
 
 USER = UserSettings(user_id=777, tz="Europe/Moscow", target_sys=135, target_dia=85)
@@ -40,6 +40,30 @@ class ExportTest(unittest.TestCase):
         text = payload.decode("utf-8-sig")
         self.assertIn("верхнее;нижнее", text.replace(";пульс", ""))
         self.assertEqual(len(text.strip().splitlines()), 4)
+
+    def test_table_columns_never_touch(self):
+        """Самое длинное название категории не должно слипаться с комментарием."""
+        longest = Measurement(
+            id=1,
+            systolic=150,  # изолированная систолическая АГ — 30 символов в названии
+            diastolic=85,
+            pulse=72,
+            measured_at=NOW,
+            note="после кофе",
+        )
+        row = table_rows([longest])[-1]
+        self.assertIn("Изолированная систолическая АГ", row)
+        self.assertIn("Изолированная систолическая АГ  после кофе", row)
+        self.assertNotIn("АГпосле", row)
+
+    def test_table_truncates_long_notes_with_ellipsis(self):
+        long_note = Measurement(
+            id=1, systolic=120, diastolic=80, pulse=70, measured_at=NOW,
+            note="очень длинный комментарий про самочувствие и лекарства",
+        )
+        row = table_rows([long_note])[-1]
+        self.assertTrue(row.endswith("…"), row)
+        self.assertLessEqual(len(row), len(table_rows([long_note])[0]) + 20)
 
     def test_text_report_has_summary_and_table(self):
         measurements = series(10)

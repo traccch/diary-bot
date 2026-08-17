@@ -11,8 +11,8 @@ import importlib.util
 import io
 from typing import Optional, Sequence
 
-from .classify import classify
 from .db import Measurement, UserSettings
+from .export import table_rows
 from .formatting import format_period
 from .stats import Summary
 
@@ -279,25 +279,6 @@ def _summary_lines(summary: Summary, user: UserSettings) -> list[str]:
     return lines
 
 
-def _table_rows(measurements: Sequence[Measurement]) -> list[str]:
-    rows = [
-        f"{'Дата':<11}{'Время':<8}{'САД':>5}{'ДАД':>6}{'Пульс':>7}  "
-        f"{'Категория':<22}Комментарий",
-        "-" * 104,
-    ]
-    for measurement in measurements:
-        grade = classify(measurement.systolic, measurement.diastolic)
-        note = measurement.note[:26] + ("…" if len(measurement.note) > 26 else "")
-        rows.append(
-            f"{measurement.measured_at:%d.%m.%Y} "
-            f"{measurement.measured_at:%H:%M}   "
-            f"{measurement.systolic:>5}{measurement.diastolic:>6}"
-            f"{(measurement.pulse or '—'):>7}  "
-            f"{grade.title[:22]:<22}{note}"
-        )
-    return rows
-
-
 def summary_page(
     plt,
     measurements: Sequence[Measurement],
@@ -355,7 +336,7 @@ def doctor_pdf(
         pdf.savefig(page)
         plt.close(page)
 
-        rows = _table_rows(measurements)
+        rows = table_rows(measurements)
         header, rest = rows[:2], rows[2:]
         for start in range(0, len(rest), TABLE_ROWS_PER_PAGE):
             chunk = rest[start : start + TABLE_ROWS_PER_PAGE]

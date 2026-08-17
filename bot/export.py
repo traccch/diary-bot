@@ -13,6 +13,42 @@ from .formatting import format_period, measurements_word
 from .stats import Summary
 
 
+#: Ширины колонок таблицы измерений. «Изолированная систолическая АГ» — самое
+#: длинное название категории (30 символов), под него и рассчитана колонка.
+CATEGORY_WIDTH = 30
+NOTE_WIDTH = 26
+COLUMN_GAP = "  "
+
+TABLE_HEADER = (
+    f"{'Дата':<11}{'Время':<7}{'САД':>4}{'ДАД':>5}{'Пульс':>7}{COLUMN_GAP}"
+    f"{'Категория':<{CATEGORY_WIDTH}}{COLUMN_GAP}Комментарий"
+)
+TABLE_RULE = "-" * (len(TABLE_HEADER) + NOTE_WIDTH - len("Комментарий"))
+
+
+def _fit(text: str, width: int) -> str:
+    """Обрезает с многоточием и дополняет до ширины, чтобы колонки не слипались."""
+    if len(text) > width:
+        return text[: width - 1] + "…"
+    return text.ljust(width)
+
+
+def table_rows(measurements: Sequence[Measurement]) -> list[str]:
+    """Таблица измерений моноширинным текстом — общая для PDF и текстового отчёта."""
+    rows = [TABLE_HEADER, TABLE_RULE]
+    for measurement in measurements:
+        grade = classify(measurement.systolic, measurement.diastolic)
+        rows.append(
+            f"{measurement.measured_at:%d.%m.%Y} "
+            f"{measurement.measured_at:%H:%M}  "
+            f"{measurement.systolic:>4}{measurement.diastolic:>5}"
+            f"{(measurement.pulse or '—'):>7}{COLUMN_GAP}"
+            f"{_fit(grade.title, CATEGORY_WIDTH)}{COLUMN_GAP}"
+            f"{_fit(measurement.note, NOTE_WIDTH).rstrip()}"
+        )
+    return rows
+
+
 def csv_bytes(measurements: Sequence[Measurement]) -> bytes:
     """CSV с точкой с запятой и BOM — Excel открывает без плясок с кодировкой."""
     buffer = io.StringIO()
@@ -69,22 +105,9 @@ def text_report(
                 f"    {part.title:<10} n={part.count:<4} {part.avg_sys}/{part.avg_dia}{pulse}"
             )
 
-    lines.extend(
-        [
-            "",
-            f"ИЗМЕРЕНИЯ ({summary.count} {measurements_word(summary.count)})",
-            f"{'Дата':<11}{'Время':<8}{'САД':>5}{'ДАД':>6}{'Пульс':>7}  "
-            f"{'Категория':<24}Комментарий",
-            "-" * 100,
-        ]
-    )
-    for measurement in measurements:
-        grade = classify(measurement.systolic, measurement.diastolic)
-        lines.append(
-            f"{measurement.measured_at:%d.%m.%Y} {measurement.measured_at:%H:%M}   "
-            f"{measurement.systolic:>5}{measurement.diastolic:>6}"
-            f"{(measurement.pulse or '—'):>7}  {grade.title[:24]:<24}{measurement.note}"
-        )
+    lines.append("")
+    lines.append(f"ИЗМЕРЕНИЯ ({summary.count} {measurements_word(summary.count)})")
+    lines.extend(table_rows(measurements))
 
     lines.extend(
         [
