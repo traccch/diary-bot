@@ -369,6 +369,33 @@ def parse_time(text: str) -> Optional[dt.time]:
     return dt.time(hour, minute)
 
 
+#: Давление со слэшем ни с чем не спутать — такую строку не отдаём деньгам.
+_UNAMBIGUOUS_BP = re.compile(
+    r"(?<!\d)\d{2,3}\s*(?:/|\\|\||\bна\b)\s*\d{2,3}(?!\d)", re.IGNORECASE
+)
+#: «120 80 68» целиком из чисел — тоже давление, а не сумма с комментарием.
+_ONLY_NUMBERS = re.compile(r"^[\d\s./\\|-]+$")
+
+
+def looks_like_pressure(text: str) -> bool:
+    """Точно ли это измерение, даже если открыт другой раздел.
+
+    Нужно, чтобы «120/80 68» не превратилось в трату 68 ₽: денежный разбор
+    берёт из строки последнее число и с радостью бы это сделал.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if _UNAMBIGUOUS_BP.search(raw):
+        return True
+    if not _ONLY_NUMBERS.match(raw):
+        return False
+    try:
+        return parse_measurement(raw) is not None
+    except ParseError:
+        return True  # цифры давления, но кривые — пусть отвечает раздел давления
+
+
 def looks_like_numbers(text: str) -> bool:
     """Есть ли в тексте вообще цифры — чтобы отличить «привет» от «12080»."""
     return any(char.isdigit() for char in text or "")

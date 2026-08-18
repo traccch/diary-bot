@@ -8,17 +8,18 @@ from typing import Optional, Sequence
 
 from . import metrics
 from .classify import ALL_GRADES, CRISIS_DIA, CRISIS_SYS, Grade, classify, in_target
-from .db import Database, Measurement, Metric, UserSettings
-from .formatting import (
+from ..db import Database, UserSettings
+from .db import Measurement, Metric
+from ..formatting import (
     bar,
     days_word,
     esc,
     format_period,
-    measurements_word,
     plural,
     short_moment,
     sparkline,
 )
+from .formatting import measurements_word
 
 #: Ключ периода → (сколько дней, название)
 PERIODS: tuple[tuple[str, int, str], ...] = (

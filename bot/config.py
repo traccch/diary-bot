@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
+from .voice import VoiceConfig
+
 
 @dataclass(frozen=True)
 class Config:
@@ -20,6 +22,7 @@ class Config:
     #: кто первым написал боту.
     owner_id: Optional[int]
     auto_update_check: bool
+    voice: VoiceConfig
 
 
 def load_config() -> Config:
@@ -42,10 +45,15 @@ def load_config() -> Config:
 
     return Config(
         token=token,
-        db_path=os.getenv("DB_PATH", "data/pressure.db").strip() or "data/pressure.db",
+        db_path=os.getenv("DB_PATH", "data/diary.db").strip() or "data/diary.db",
         default_tz=tz,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         owner_id=owner_id,
         auto_update_check=os.getenv("AUTO_UPDATE_CHECK", "1").strip().lower()
         not in {"0", "false", "no", "off"},
+        voice=VoiceConfig(
+            binary=os.getenv("VOICE_BINARY", "").strip(),
+            model=os.getenv("VOICE_MODEL", "").strip(),
+            language=os.getenv("VOICE_LANGUAGE", "ru").strip() or "ru",
+        ),
     )

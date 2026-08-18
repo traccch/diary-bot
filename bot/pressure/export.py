@@ -8,8 +8,10 @@ import io
 from typing import Sequence
 
 from .classify import classify
-from .db import Measurement, UserSettings
-from .formatting import format_period, measurements_word
+from ..db import UserSettings
+from .db import Measurement
+from ..formatting import format_period
+from .formatting import measurements_word
 from .stats import Summary
 
 

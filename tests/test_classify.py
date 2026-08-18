@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot.classify import alert, classify, in_target
+from bot.pressure.classify import alert, classify, in_target
 
 
 class ClassifyTest(unittest.TestCase):

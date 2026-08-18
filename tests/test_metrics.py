@@ -7,10 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot import metrics
-from bot.db import Database, Measurement, Metric, UserSettings
-from bot.parsing import ParseError, parse_entry
-from bot.stats import (
+from bot.pressure import metrics
+from bot.db import Database, UserSettings
+from bot.pressure.db import Measurement, Metric
+from bot.pressure.parsing import ParseError, parse_entry
+from bot.pressure.stats import (
     build_health_block,
     collect_health,
     correlate,

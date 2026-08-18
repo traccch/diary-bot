@@ -6,16 +6,23 @@ import datetime as dt
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandObject, StateFilter
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from ..classify import alert
-from ..db import Database, UserSettings
-from ..formatting import esc, measurements_word, render_line, render_measurement, render_metric
+from ... import sections
+from ...db import Database, UserSettings
 from ..keyboards import delete_buttons, measurement_actions, skip_note
-from ..parsing import ParseError, looks_like_numbers, parse_entry
+from ..classify import alert
+from ...formatting import esc
+from ..formatting import (
+    measurements_word,
+    render_line,
+    render_measurement,
+    render_metric,
+)
+from ..parsing import ParseError, parse_entry
 from ..stats import summarize
 
 router = Router(name="entry")
@@ -180,7 +187,6 @@ async def state_note(
     )
 
 
-@router.message(Command("last"))
 async def cmd_last(
     message: Message, db: Database, user: UserSettings, now: dt.datetime
 ) -> None:
@@ -194,7 +200,6 @@ async def cmd_last(
     await message.answer("\n".join(lines), reply_markup=delete_buttons(measurements))
 
 
-@router.message(Command("undo"))
 async def cmd_undo(message: Message, db: Database, user: UserSettings) -> None:
     recent = await db.last_measurements(user.user_id, limit=1)
     if not recent:
@@ -205,7 +210,6 @@ async def cmd_undo(message: Message, db: Database, user: UserSettings) -> None:
     await message.answer(f"🗑 Удалил измерение {measurement.bp}.")
 
 
-@router.message(Command("del"))
 async def cmd_del(
     message: Message, command: CommandObject, db: Database, user: UserSettings
 ) -> None:
@@ -217,23 +221,6 @@ async def cmd_del(
         await message.answer(f"🗑 Измерение #{int(raw)} удалено.")
     else:
         await message.answer("Такого измерения нет.")
-
-
-@router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
-async def free_text(
-    message: Message, db: Database, user: UserSettings, now: dt.datetime
-) -> None:
-    text = message.text or ""
-    if await save_measurement(message, text, db, user, now) != NOT_FOUND:
-        return
-    if looks_like_numbers(text):
-        await message.answer(HINT)
-    else:
-        await message.answer(
-            "Это я записать не смогу. Я про давление и самочувствие: "
-            "<code>120/80 68</code>, <code>сон 23:21-7:01</code>, "
-            "<code>шаги 8200</code>, <code>вес 78,5</code>.\n\nВсе команды — /help"
-        )
 
 
 # ------------------------------------------------------------------ кнопки
@@ -281,9 +268,23 @@ async def cb_delete(callback: CallbackQuery, db: Database, user: UserSettings) -
             pass  # уже отредактировано этим же текстом
 
 
-@router.callback_query(F.data == "rem:write")
-async def cb_write_now(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(Entry.waiting_bp)
+@router.callback_query(F.data.startswith("rem:write"))
+async def cb_write_now(
+    callback: CallbackQuery, state: FSMContext, db: Database, user: UserSettings
+) -> None:
+    """Кнопка из напоминания. Для денег состояние не нужно — там всё одной строкой."""
+    parts = (callback.data or "").split(":")
+    topic = parts[2] if len(parts) > 2 else sections.PRESSURE
     await callback.answer()
-    if isinstance(callback.message, Message):
-        await callback.message.answer(ASK_BP)
+    if not isinstance(callback.message, Message):
+        return
+
+    await db.set_section(user.user_id, topic)
+    if topic == sections.MONEY:
+        await callback.message.answer(
+            "Что записать? Например: <code>кофе 300</code>, <code>такси 450</code>."
+        )
+        return
+
+    await state.set_state(Entry.waiting_bp)
+    await callback.message.answer(ASK_BP)

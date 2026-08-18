@@ -7,8 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot.db import Database, Measurement, UserSettings
-from bot.stats import (
+from bot.db import Database, UserSettings
+from bot.pressure.db import Measurement
+from bot.pressure.stats import (
     build_report,
     day_part,
     period_range,

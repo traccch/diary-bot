@@ -115,6 +115,10 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
 
     # --------------------------------------------------------- напоминания
 
+    async def test_snooze_keeps_the_topic(self):
+        await self.db.add_snooze(USER_ID, NOW, "money")
+        self.assertEqual(await self.db.pop_due_snoozes(NOW), [(USER_ID, "money")])
+
     async def test_reminders_crud(self):
         morning = await self.db.add_reminder(USER_ID, dt.time(8, 0))
         evening = await self.db.add_reminder(USER_ID, dt.time(21, 0))
@@ -148,10 +152,11 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
     async def test_snoozes_pop_once(self):
         await self.db.add_snooze(USER_ID, NOW)
         await self.db.add_snooze(USER_ID, NOW + dt.timedelta(hours=1))
-        self.assertEqual(await self.db.pop_due_snoozes(NOW), [USER_ID])
+        self.assertEqual(await self.db.pop_due_snoozes(NOW), [(USER_ID, "pressure")])
         self.assertEqual(await self.db.pop_due_snoozes(NOW), [])
         self.assertEqual(
-            await self.db.pop_due_snoozes(NOW + dt.timedelta(hours=2)), [USER_ID]
+            await self.db.pop_due_snoozes(NOW + dt.timedelta(hours=2)),
+            [(USER_ID, "pressure")],
         )
 
 

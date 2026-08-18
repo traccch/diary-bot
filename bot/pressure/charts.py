@@ -12,9 +12,10 @@ import io
 from typing import Optional, Sequence
 
 from . import metrics
-from .db import Measurement, UserSettings
+from ..db import UserSettings
+from .db import Measurement
 from .export import table_rows
-from .formatting import format_period
+from ..formatting import format_period
 from .stats import Summary
 
 #: Цвета серий (проверены на различимость при дальтонизме).

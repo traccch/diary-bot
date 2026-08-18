@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import unittest
 
-from bot.parsing import ParseError, parse_measurement, parse_time
+from bot.pressure.parsing import ParseError, parse_measurement, parse_time
 
 NOW = dt.datetime(2026, 8, 17, 14, 30)
 

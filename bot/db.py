@@ -1,8 +1,8 @@
-"""Слой доступа к данным поверх SQLite (aiosqlite).
+"""Ядро хранилища: подключение к SQLite, пользователи, напоминания, пометки.
 
-Время измерения хранится строкой «YYYY-MM-DD HH:MM» в часовом поясе пользователя:
-дневник ведётся «по местным часам», а такой формат сортируется и сравнивается
-лексикографически, поэтому выборки за период — обычный BETWEEN.
+Запросы разделов живут рядом со своими модулями и подмешиваются к Database:
+`bot/pressure/db.py` и `bot/money/db.py`. Так каждый раздел можно читать
+целиком, не листая общий файл на тысячу строк.
 """
 
 from __future__ import annotations
@@ -14,64 +14,44 @@ from typing import Optional
 
 import aiosqlite
 
+from . import sections
+from .money.db import SCHEMA as MONEY_SCHEMA
+from .money.db import MoneyRepo
+from .pressure.db import SCHEMA as PRESSURE_SCHEMA
+from .pressure.db import PressureRepo
+
 #: Целевые значения по умолчанию — домашние измерения (ESC/ESH: АГ при ≥135/85).
 DEFAULT_TARGET_SYS = 135
 DEFAULT_TARGET_DIA = 85
 
-STAMP_FORMAT = "%Y-%m-%d %H:%M"
-
-SCHEMA = """
+CORE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     user_id          INTEGER PRIMARY KEY,
     tz               TEXT NOT NULL DEFAULT 'Europe/Moscow',
     target_sys       INTEGER NOT NULL DEFAULT 135,
     target_dia       INTEGER NOT NULL DEFAULT 85,
     skip_if_measured INTEGER NOT NULL DEFAULT 1,
+    section          TEXT NOT NULL DEFAULT 'pressure',
+    currency         TEXT NOT NULL DEFAULT '₽',
     created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE TABLE IF NOT EXISTS measurements (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL,
-    systolic    INTEGER NOT NULL,
-    diastolic   INTEGER NOT NULL,
-    pulse       INTEGER,
-    measured_at TEXT NOT NULL,
-    note        TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_measurements_user_time
-    ON measurements(user_id, measured_at);
 
 CREATE TABLE IF NOT EXISTS reminders (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id       INTEGER NOT NULL,
+    topic         TEXT NOT NULL DEFAULT 'pressure',
     at            TEXT NOT NULL,
     enabled       INTEGER NOT NULL DEFAULT 1,
     last_fired_on TEXT,
-    UNIQUE(user_id, at)
+    UNIQUE(user_id, topic, at)
 );
 
 CREATE TABLE IF NOT EXISTS snoozes (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
+    topic   TEXT NOT NULL DEFAULT 'pressure',
     fire_at TEXT NOT NULL
 );
-
--- Показатели здоровья: сон, шаги, пульс покоя, вес. Одно значение на день,
--- повторная запись за тот же день заменяет предыдущую.
-CREATE TABLE IF NOT EXISTS metrics (
-    user_id    INTEGER NOT NULL,
-    kind       TEXT NOT NULL,
-    on_date    TEXT NOT NULL,
-    value      REAL NOT NULL,
-    extra      TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (user_id, kind, on_date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_metrics_user_kind ON metrics(user_id, kind, on_date);
 
 -- Служебные пометки бота: например, о каком обновлении владельцу уже сказали.
 CREATE TABLE IF NOT EXISTS meta (
@@ -79,6 +59,8 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 """
+
+SCHEMA = CORE_SCHEMA + PRESSURE_SCHEMA + MONEY_SCHEMA
 
 
 @dataclass(frozen=True)
@@ -88,40 +70,14 @@ class UserSettings:
     target_sys: int = DEFAULT_TARGET_SYS
     target_dia: int = DEFAULT_TARGET_DIA
     skip_if_measured: bool = True
-
-
-@dataclass(frozen=True)
-class Measurement:
-    id: int
-    systolic: int
-    diastolic: int
-    pulse: Optional[int]
-    measured_at: dt.datetime
-    note: str = ""
-
-    @property
-    def bp(self) -> str:
-        return f"{self.systolic}/{self.diastolic}"
-
-
-@dataclass(frozen=True)
-class Metric:
-    """Показатель здоровья за день: сон, шаги, пульс покоя или вес.
-
-    `value` хранится в базовых единицах — сон в минутах, вес в килограммах.
-    `extra` нужен сну: там лежит «23:21-07:01», чтобы показать режим, а не
-    только длительность.
-    """
-
-    kind: str
-    on_date: dt.date
-    value: float
-    extra: str = ""
+    section: str = sections.DEFAULT
+    currency: str = "₽"
 
 
 @dataclass(frozen=True)
 class Reminder:
     id: int
+    topic: str
     at: dt.time
     enabled: bool
     last_fired_on: Optional[dt.date]
@@ -138,53 +94,24 @@ class DueReminder:
     user_id: int
     tz: str
     reminder_id: int
+    topic: str
     at: dt.time
     last_fired_on: Optional[dt.date]
     skip_if_measured: bool
-
-
-def parse_stamp(raw: str) -> dt.datetime:
-    return dt.datetime.strptime(raw, STAMP_FORMAT)
-
-
-def format_stamp(moment: dt.datetime) -> str:
-    return moment.strftime(STAMP_FORMAT)
-
-
-def _row_to_measurement(row: aiosqlite.Row) -> Measurement:
-    return Measurement(
-        id=row["id"],
-        systolic=row["systolic"],
-        diastolic=row["diastolic"],
-        pulse=row["pulse"],
-        measured_at=parse_stamp(row["measured_at"]),
-        note=row["note"],
-    )
-
-
-def _row_to_metric(row: aiosqlite.Row) -> Metric:
-    return Metric(
-        kind=row["kind"],
-        on_date=dt.date.fromisoformat(row["on_date"]),
-        value=row["value"],
-        extra=row["extra"],
-    )
 
 
 def _row_to_reminder(row: aiosqlite.Row) -> Reminder:
     fired = row["last_fired_on"]
     return Reminder(
         id=row["id"],
+        topic=row["topic"],
         at=dt.time.fromisoformat(row["at"]),
         enabled=bool(row["enabled"]),
         last_fired_on=dt.date.fromisoformat(fired) if fired else None,
     )
 
 
-_SELECT = "SELECT id, systolic, diastolic, pulse, measured_at, note FROM measurements"
-
-
-class Database:
+class Database(PressureRepo, MoneyRepo):
     def __init__(self, path: str, default_tz: str) -> None:
         self._path = path
         self._default_tz = default_tz
@@ -217,7 +144,7 @@ class Database:
 
     async def ensure_user(self, user_id: int) -> UserSettings:
         cur = await self.conn.execute(
-            "SELECT user_id, tz, target_sys, target_dia, skip_if_measured"
+            "SELECT user_id, tz, target_sys, target_dia, skip_if_measured, section, currency"
             " FROM users WHERE user_id = ?",
             (user_id,),
         )
@@ -227,6 +154,7 @@ class Database:
                 "INSERT INTO users (user_id, tz) VALUES (?, ?)", (user_id, self._default_tz)
             )
             await self.conn.commit()
+            await self.seed_money_categories(user_id)
             return UserSettings(user_id=user_id, tz=self._default_tz)
         return UserSettings(
             user_id=row["user_id"],
@@ -234,6 +162,8 @@ class Database:
             target_sys=row["target_sys"],
             target_dia=row["target_dia"],
             skip_if_measured=bool(row["skip_if_measured"]),
+            section=row["section"],
+            currency=row["currency"],
         )
 
     async def owner_id(self) -> Optional[int]:
@@ -261,6 +191,18 @@ class Database:
         await self.conn.execute("UPDATE users SET tz = ? WHERE user_id = ?", (tz, user_id))
         await self.conn.commit()
 
+    async def set_section(self, user_id: int, section: str) -> None:
+        await self.conn.execute(
+            "UPDATE users SET section = ? WHERE user_id = ?", (section, user_id)
+        )
+        await self.conn.commit()
+
+    async def set_currency(self, user_id: int, currency: str) -> None:
+        await self.conn.execute(
+            "UPDATE users SET currency = ? WHERE user_id = ?", (currency, user_id)
+        )
+        await self.conn.commit()
+
     async def set_target(self, user_id: int, systolic: int, diastolic: int) -> None:
         await self.conn.execute(
             "UPDATE users SET target_sys = ?, target_dia = ? WHERE user_id = ?",
@@ -274,181 +216,55 @@ class Database:
         )
         await self.conn.commit()
 
-    # ----------------------------------------------------------- measurements
-
-    async def add_measurement(
-        self,
-        user_id: int,
-        systolic: int,
-        diastolic: int,
-        pulse: Optional[int],
-        measured_at: dt.datetime,
-        note: str = "",
-    ) -> Measurement:
-        cur = await self.conn.execute(
-            "INSERT INTO measurements (user_id, systolic, diastolic, pulse, measured_at, note)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, systolic, diastolic, pulse, format_stamp(measured_at), note.strip()),
-        )
-        await self.conn.commit()
-        created = await self.get_measurement(user_id, cur.lastrowid)
-        assert created is not None
-        return created
-
-    async def get_measurement(self, user_id: int, measurement_id: int) -> Optional[Measurement]:
-        cur = await self.conn.execute(
-            _SELECT + " WHERE user_id = ? AND id = ?", (user_id, measurement_id)
-        )
-        row = await cur.fetchone()
-        return _row_to_measurement(row) if row else None
-
-    async def last_measurements(self, user_id: int, limit: int = 10) -> list[Measurement]:
-        cur = await self.conn.execute(
-            _SELECT + " WHERE user_id = ? ORDER BY measured_at DESC, id DESC LIMIT ?",
-            (user_id, limit),
-        )
-        return [_row_to_measurement(row) for row in await cur.fetchall()]
-
-    async def measurements_between(
-        self, user_id: int, start: dt.datetime, end: dt.datetime
-    ) -> list[Measurement]:
-        cur = await self.conn.execute(
-            _SELECT + " WHERE user_id = ? AND measured_at BETWEEN ? AND ?"
-            " ORDER BY measured_at, id",
-            (user_id, format_stamp(start), format_stamp(end)),
-        )
-        return [_row_to_measurement(row) for row in await cur.fetchall()]
-
-    async def delete_measurement(self, user_id: int, measurement_id: int) -> bool:
-        cur = await self.conn.execute(
-            "DELETE FROM measurements WHERE user_id = ? AND id = ?", (user_id, measurement_id)
-        )
-        await self.conn.commit()
-        return cur.rowcount > 0
-
-    async def set_note(
-        self, user_id: int, measurement_id: int, note: str
-    ) -> Optional[Measurement]:
-        cur = await self.conn.execute(
-            "UPDATE measurements SET note = ? WHERE user_id = ? AND id = ?",
-            (note.strip(), user_id, measurement_id),
-        )
-        await self.conn.commit()
-        if cur.rowcount == 0:
-            return None
-        return await self.get_measurement(user_id, measurement_id)
-
-    async def first_measured_at(self, user_id: int) -> Optional[dt.datetime]:
-        cur = await self.conn.execute(
-            "SELECT MIN(measured_at) AS first FROM measurements WHERE user_id = ?", (user_id,)
-        )
-        row = await cur.fetchone()
-        return parse_stamp(row["first"]) if row and row["first"] else None
-
-    async def count_measurements(self, user_id: int) -> int:
-        cur = await self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM measurements WHERE user_id = ?", (user_id,)
-        )
-        row = await cur.fetchone()
-        return row["cnt"] if row else 0
-
-    # ------------------------------------------------- показатели здоровья
-
-    async def set_metric(
-        self, user_id: int, kind: str, on_date: dt.date, value: float, extra: str = ""
-    ) -> Metric:
-        """Записывает показатель за день, заменяя прежнее значение за ту же дату."""
-        await self.conn.execute(
-            "INSERT INTO metrics (user_id, kind, on_date, value, extra)"
-            " VALUES (?, ?, ?, ?, ?)"
-            " ON CONFLICT(user_id, kind, on_date) DO UPDATE SET"
-            " value = excluded.value, extra = excluded.extra",
-            (user_id, kind, on_date.isoformat(), float(value), extra),
-        )
-        await self.conn.commit()
-        return Metric(kind=kind, on_date=on_date, value=float(value), extra=extra)
-
-    async def get_metric(
-        self, user_id: int, kind: str, on_date: dt.date
-    ) -> Optional[Metric]:
-        cur = await self.conn.execute(
-            "SELECT kind, on_date, value, extra FROM metrics"
-            " WHERE user_id = ? AND kind = ? AND on_date = ?",
-            (user_id, kind, on_date.isoformat()),
-        )
-        row = await cur.fetchone()
-        return _row_to_metric(row) if row else None
-
-    async def metrics_between(
-        self, user_id: int, kind: str, start: dt.date, end: dt.date
-    ) -> list[Metric]:
-        cur = await self.conn.execute(
-            "SELECT kind, on_date, value, extra FROM metrics"
-            " WHERE user_id = ? AND kind = ? AND on_date BETWEEN ? AND ?"
-            " ORDER BY on_date",
-            (user_id, kind, start.isoformat(), end.isoformat()),
-        )
-        return [_row_to_metric(row) for row in await cur.fetchall()]
-
-    async def last_metric(self, user_id: int, kind: str) -> Optional[Metric]:
-        cur = await self.conn.execute(
-            "SELECT kind, on_date, value, extra FROM metrics"
-            " WHERE user_id = ? AND kind = ? ORDER BY on_date DESC LIMIT 1",
-            (user_id, kind),
-        )
-        row = await cur.fetchone()
-        return _row_to_metric(row) if row else None
-
-    async def delete_metric(self, user_id: int, kind: str, on_date: dt.date) -> bool:
-        cur = await self.conn.execute(
-            "DELETE FROM metrics WHERE user_id = ? AND kind = ? AND on_date = ?",
-            (user_id, kind, on_date.isoformat()),
-        )
-        await self.conn.commit()
-        return cur.rowcount > 0
-
-    async def count_metrics(self, user_id: int) -> int:
-        cur = await self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM metrics WHERE user_id = ?", (user_id,)
-        )
-        row = await cur.fetchone()
-        return row["cnt"] if row else 0
-
     # ------------------------------------------------------------ напоминания
 
-    async def list_reminders(self, user_id: int) -> list[Reminder]:
-        cur = await self.conn.execute(
-            "SELECT id, at, enabled, last_fired_on FROM reminders"
-            " WHERE user_id = ? ORDER BY at",
-            (user_id,),
-        )
+    async def list_reminders(
+        self, user_id: int, topic: Optional[str] = None
+    ) -> list[Reminder]:
+        query = "SELECT id, topic, at, enabled, last_fired_on FROM reminders WHERE user_id = ?"
+        params: list = [user_id]
+        if topic is not None:
+            query += " AND topic = ?"
+            params.append(topic)
+        cur = await self.conn.execute(query + " ORDER BY topic, at", params)
         return [_row_to_reminder(row) for row in await cur.fetchall()]
 
-    async def add_reminder(self, user_id: int, at: dt.time) -> Optional[Reminder]:
+    async def add_reminder(
+        self, user_id: int, at: dt.time, topic: str = sections.PRESSURE
+    ) -> Optional[Reminder]:
         """Добавляет напоминание. None, если на это время оно уже есть."""
         try:
             await self.conn.execute(
-                "INSERT INTO reminders (user_id, at) VALUES (?, ?)",
-                (user_id, at.strftime("%H:%M")),
+                "INSERT INTO reminders (user_id, topic, at) VALUES (?, ?, ?)",
+                (user_id, topic, at.strftime("%H:%M")),
             )
         except aiosqlite.IntegrityError:
             return None
         await self.conn.commit()
-        for reminder in await self.list_reminders(user_id):
+        for reminder in await self.list_reminders(user_id, topic):
             if reminder.at == at:
                 return reminder
         return None
 
-    async def delete_reminder(self, user_id: int, at: dt.time) -> bool:
+    async def delete_reminder(
+        self, user_id: int, at: dt.time, topic: str = sections.PRESSURE
+    ) -> bool:
         cur = await self.conn.execute(
-            "DELETE FROM reminders WHERE user_id = ? AND at = ?",
-            (user_id, at.strftime("%H:%M")),
+            "DELETE FROM reminders WHERE user_id = ? AND topic = ? AND at = ?",
+            (user_id, topic, at.strftime("%H:%M")),
         )
         await self.conn.commit()
         return cur.rowcount > 0
 
-    async def delete_all_reminders(self, user_id: int) -> int:
-        cur = await self.conn.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+    async def delete_all_reminders(
+        self, user_id: int, topic: Optional[str] = None
+    ) -> int:
+        query = "DELETE FROM reminders WHERE user_id = ?"
+        params: list = [user_id]
+        if topic is not None:
+            query += " AND topic = ?"
+            params.append(topic)
+        cur = await self.conn.execute(query, params)
         await self.conn.commit()
         return cur.rowcount
 
@@ -461,7 +277,7 @@ class Database:
     async def due_candidates(self) -> list[DueReminder]:
         """Все включённые напоминания вместе с настройками владельца."""
         cur = await self.conn.execute(
-            "SELECT r.id, r.user_id, r.at, r.last_fired_on, u.tz, u.skip_if_measured"
+            "SELECT r.id, r.user_id, r.topic, r.at, r.last_fired_on, u.tz, u.skip_if_measured"
             " FROM reminders r JOIN users u ON u.user_id = r.user_id"
             " WHERE r.enabled = 1"
         )
@@ -473,6 +289,7 @@ class Database:
                     user_id=row["user_id"],
                     tz=row["tz"],
                     reminder_id=row["id"],
+                    topic=row["topic"],
                     at=dt.time.fromisoformat(row["at"]),
                     last_fired_on=dt.date.fromisoformat(fired) if fired else None,
                     skip_if_measured=bool(row["skip_if_measured"]),
@@ -480,27 +297,22 @@ class Database:
             )
         return result
 
-    async def has_measurement_since(self, user_id: int, since: dt.datetime) -> bool:
-        cur = await self.conn.execute(
-            "SELECT 1 FROM measurements WHERE user_id = ? AND measured_at >= ? LIMIT 1",
-            (user_id, format_stamp(since)),
-        )
-        return await cur.fetchone() is not None
-
     # ------------------------------------------------------- отложенные (snooze)
 
-    async def add_snooze(self, user_id: int, fire_at_utc: dt.datetime) -> None:
+    async def add_snooze(
+        self, user_id: int, fire_at_utc: dt.datetime, topic: str = sections.PRESSURE
+    ) -> None:
         await self.conn.execute(
-            "INSERT INTO snoozes (user_id, fire_at) VALUES (?, ?)",
-            (user_id, fire_at_utc.strftime("%Y-%m-%d %H:%M:%S")),
+            "INSERT INTO snoozes (user_id, topic, fire_at) VALUES (?, ?, ?)",
+            (user_id, topic, fire_at_utc.strftime("%Y-%m-%d %H:%M:%S")),
         )
         await self.conn.commit()
 
-    async def pop_due_snoozes(self, now_utc: dt.datetime) -> list[int]:
-        """Возвращает user_id, которым пора напомнить, и удаляет эти записи."""
+    async def pop_due_snoozes(self, now_utc: dt.datetime) -> list[tuple[int, str]]:
+        """Возвращает (user_id, тема) для сработавших отсрочек и удаляет их."""
         stamp = now_utc.strftime("%Y-%m-%d %H:%M:%S")
         cur = await self.conn.execute(
-            "SELECT id, user_id FROM snoozes WHERE fire_at <= ?", (stamp,)
+            "SELECT id, user_id, topic FROM snoozes WHERE fire_at <= ?", (stamp,)
         )
         rows = await cur.fetchall()
         if not rows:
@@ -509,4 +321,4 @@ class Database:
             "DELETE FROM snoozes WHERE id = ?", [(row["id"],) for row in rows]
         )
         await self.conn.commit()
-        return [row["user_id"] for row in rows]
+        return [(row["user_id"], row["topic"]) for row in rows]

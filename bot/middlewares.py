@@ -1,4 +1,4 @@
-"""Мидлварь: подстановка настроек пользователя и его локального «сейчас»."""
+"""Мидлварь: настройки пользователя и его локальные «сейчас» и «сегодня»."""
 
 from __future__ import annotations
 
@@ -36,6 +36,8 @@ class UserMiddleware(BaseMiddleware):
 
         db: Database = data["db"]
         settings = await db.ensure_user(user.id)
+        now = now_for(settings.tz)
         data["user"] = settings
-        data["now"] = now_for(settings.tz)
+        data["now"] = now
+        data["today"] = now.date()
         return await handler(event, data)

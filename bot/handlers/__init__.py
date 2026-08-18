@@ -1,19 +1,22 @@
-"""Роутеры бота. Порядок важен: entry ловит любой свободный текст, он последний."""
+"""Сборка роутеров. Порядок важен: router ловит свободный текст, он последний."""
 
 from aiogram import Router
 
-from . import common, entry, export, reminders, reports, update
+from ..money import handlers as money
+from ..pressure import handlers as pressure
+from . import common, menu, reminders, router as shared, update
 
 
 def build_router() -> Router:
-    router = Router(name="root")
-    router.include_router(common.router)
-    router.include_router(update.router)
-    router.include_router(reminders.router)
-    router.include_router(reports.router)
-    router.include_router(export.router)
-    router.include_router(entry.router)
-    return router
+    root = Router(name="root")
+    root.include_router(common.router)
+    root.include_router(menu.router)
+    root.include_router(update.router)
+    root.include_router(reminders.router)
+    root.include_router(pressure.build_router())
+    root.include_router(money.build_router())
+    root.include_router(shared.router)
+    return root
 
 
 __all__ = ["build_router"]

@@ -6,10 +6,11 @@ import datetime as dt
 import re
 import unittest
 
-from bot import charts
-from bot.db import Measurement, UserSettings
-from bot.export import csv_bytes, table_rows, text_report
-from bot.stats import summarize
+from bot.pressure import charts
+from bot.db import UserSettings
+from bot.pressure.db import Measurement
+from bot.pressure.export import csv_bytes, table_rows, text_report
+from bot.pressure.stats import summarize
 
 USER = UserSettings(user_id=777, tz="Europe/Moscow", target_sys=135, target_dia=85)
 NOW = dt.datetime(2026, 8, 17, 14, 30)

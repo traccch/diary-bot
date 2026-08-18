@@ -7,13 +7,13 @@ import logging
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .. import charts, metrics
-from ..db import Database, UserSettings
-from ..formatting import format_period, measurements_word, plural
+from ...db import Database, UserSettings
+from ...formatting import format_period, plural
 from ..keyboards import chart_switch, period_switch
+from .. import charts, metrics
+from ..formatting import measurements_word
 from ..stats import PERIOD_DAYS, PERIOD_TITLES, build_report, period_range
 
 router = Router(name="reports")
@@ -113,7 +113,6 @@ def _render(build) -> bytes | None:
         return None
 
 
-@router.message(Command("stats", "report"))
 async def cmd_stats(
     message: Message, db: Database, user: UserSettings, now: dt.datetime
 ) -> None:
@@ -121,7 +120,6 @@ async def cmd_stats(
     await message.answer(text, reply_markup=period_switch(DEFAULT_PERIOD))
 
 
-@router.message(Command("chart", "graph"))
 async def cmd_chart(
     message: Message, db: Database, user: UserSettings, now: dt.datetime
 ) -> None:

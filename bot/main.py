@@ -12,26 +12,27 @@ from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from . import charts
+from .pressure import charts
 from .config import load_config
 from .db import Database
 from .handlers import build_router
 from .middlewares import UserMiddleware
 from .reminders import ReminderScheduler
 from .updater import RESTART_CODE, UpdateWatcher, Updater
+from .voice import build_transcriber
 
 logger = logging.getLogger(__name__)
 
 COMMANDS = [
-    BotCommand(command="add", description="Записать измерение по шагам"),
-    BotCommand(command="stats", description="Сводка по давлению"),
+    BotCommand(command="menu", description="Разделы: давление и деньги"),
+    BotCommand(command="stats", description="Сводка текущего раздела"),
+    BotCommand(command="last", description="Последние записи"),
+    BotCommand(command="undo", description="Удалить последнюю"),
     BotCommand(command="chart", description="График"),
-    BotCommand(command="last", description="Последние измерения"),
-    BotCommand(command="undo", description="Удалить последнее"),
+    BotCommand(command="balance", description="Баланс за месяц"),
+    BotCommand(command="export", description="Выгрузка"),
     BotCommand(command="remind", description="Напоминания"),
-    BotCommand(command="reminders", description="Список напоминаний"),
-    BotCommand(command="export", description="Выгрузка для врача"),
-    BotCommand(command="target", description="Целевые значения"),
+    BotCommand(command="limit", description="Лимит на месяц"),
     BotCommand(command="update", description="Обновить бота"),
     BotCommand(command="help", description="Как пользоваться"),
 ]
@@ -60,6 +61,7 @@ async def run() -> int:
     dispatcher["updater"] = updater
     dispatcher["owner_id"] = config.owner_id
     dispatcher["restart_event"] = restart_event
+    dispatcher["transcriber"] = build_transcriber(config.voice)
 
     middleware = UserMiddleware()
     dispatcher.message.middleware(middleware)

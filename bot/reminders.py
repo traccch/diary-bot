@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 
+from . import sections
 from .db import Database
 from .keyboards import reminder_actions
 
@@ -29,15 +30,28 @@ SNOOZE_MINUTES = 15
 
 TICK_SECONDS = 30
 
-REMINDER_TEXT = (
-    "⏰ <b>Пора измерить давление</b>\n\n"
-    "Посиди спокойно 5 минут, манжета на уровне сердца — и пришли цифры, "
-    "например <code>120/80 68</code>."
-)
+#: Тексты напоминаний по темам: у давления и денег они разные.
+REMINDER_TEXTS = {
+    sections.PRESSURE: (
+        "⏰ <b>Пора измерить давление</b>\n\n"
+        "Посиди спокойно 5 минут, манжета на уровне сердца — и пришли цифры, "
+        "например <code>120/80 68</code>."
+    ),
+    sections.MONEY: (
+        "⏰ <b>Записать траты за день</b>\n\n"
+        "Пока помнишь — пришли одной строкой: <code>кофе 300</code>, "
+        "<code>такси 450</code>."
+    ),
+}
 
-SNOOZE_TEXT = (
-    "⏰ <b>Напоминаю ещё раз</b>\n\nПришли измерение, например <code>120/80 68</code>."
-)
+SNOOZE_TEXTS = {
+    sections.PRESSURE: (
+        "⏰ <b>Напоминаю ещё раз</b>\n\nПришли измерение, например <code>120/80 68</code>."
+    ),
+    sections.MONEY: (
+        "⏰ <b>Напоминаю ещё раз</b>\n\nЗапиши траты: <code>кофе 300</code>."
+    ),
+}
 
 
 def local_now(tz: str, now_utc: dt.datetime) -> dt.datetime:
@@ -99,8 +113,8 @@ class ReminderScheduler:
         now_utc = now_utc or dt.datetime.now(dt.timezone.utc)
         sent = 0
 
-        for user_id in await self._db.pop_due_snoozes(now_utc.replace(tzinfo=None)):
-            sent += await self._send(user_id, SNOOZE_TEXT)
+        for user_id, topic in await self._db.pop_due_snoozes(now_utc.replace(tzinfo=None)):
+            sent += await self._send(user_id, SNOOZE_TEXTS.get(topic, SNOOZE_TEXTS[sections.PRESSURE]), topic)
 
         for candidate in await self._db.due_candidates():
             now = local_now(candidate.tz, now_utc)
@@ -108,18 +122,21 @@ class ReminderScheduler:
                 continue
 
             await self._db.mark_reminder_fired(candidate.reminder_id, now.date())
-            if candidate.skip_if_measured:
+            if candidate.topic == sections.PRESSURE and candidate.skip_if_measured:
                 since = now - dt.timedelta(minutes=SKIP_WINDOW_MINUTES)
                 if await self._db.has_measurement_since(candidate.user_id, since):
                     logger.debug("Напоминание %s пропущено: замер уже есть", candidate.at)
                     continue
-            sent += await self._send(candidate.user_id, REMINDER_TEXT)
+            text = REMINDER_TEXTS.get(candidate.topic, REMINDER_TEXTS[sections.PRESSURE])
+            sent += await self._send(candidate.user_id, text, candidate.topic)
 
         return sent
 
-    async def _send(self, user_id: int, text: str) -> int:
+    async def _send(self, user_id: int, text: str, topic: str = sections.PRESSURE) -> int:
         try:
-            await self._bot.send_message(user_id, text, reply_markup=reminder_actions())
+            await self._bot.send_message(
+                user_id, text, reply_markup=reminder_actions(topic)
+            )
         except TelegramAPIError as exc:
             logger.warning("Не отправил напоминание %s: %s", user_id, exc)
             return 0

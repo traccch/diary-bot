@@ -6,14 +6,14 @@ import datetime as dt
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .. import charts
-from ..db import Database, UserSettings
-from ..export import csv_bytes, text_report
-from ..formatting import format_period, measurements_word
+from ...db import Database, UserSettings
+from ...formatting import format_period
 from ..keyboards import export_menu
+from .. import charts
+from ..export import csv_bytes, text_report
+from ..formatting import measurements_word
 from ..stats import (
     PERIOD_TITLES,
     collect_health,
@@ -34,7 +34,6 @@ MENU = (
 )
 
 
-@router.message(Command("export", "doctor", "pdf"))
 async def cmd_export(message: Message, db: Database, user: UserSettings) -> None:
     if await db.count_measurements(user.user_id) == 0:
         await message.answer("Выгружать нечего — дневник пуст.")

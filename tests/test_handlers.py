@@ -26,12 +26,13 @@ from aiogram.methods import (
     TelegramMethod,
 )
 from aiogram.methods.base import TelegramType
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.types import CallbackQuery, Chat, Message, Update, User, Voice
 
 from bot.db import Database
 from bot.handlers import build_router
 from bot.middlewares import UserMiddleware
 from bot.updater import UpdateResult, UpdateStatus
+from bot.voice import VoiceConfig, build_transcriber
 
 CHAT_ID = 555
 USER_ID = 777
@@ -144,6 +145,7 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         self.dp["owner_id"] = None
         self.restart_event = asyncio.Event()
         self.dp["restart_event"] = self.restart_event
+        self.dp["transcriber"] = build_transcriber(VoiceConfig())
 
         self.bot = RecordingBot()
         self._update_id = 0
@@ -165,6 +167,23 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         )
         return self.bot.texts[-1]
 
+    async def send_voice(self, duration: int = 4) -> None:
+        self._update_id += 1
+        message = make_message("")
+        message = message.model_copy(
+            update={
+                "text": None,
+                "voice": Voice(
+                    file_id="voice-1",
+                    file_unique_id="u1",
+                    duration=duration,
+                ),
+            }
+        )
+        await self.dp.feed_update(
+            self.bot, Update(update_id=self._update_id, message=message)
+        )
+
     async def click(self, data: str) -> None:
         self._update_id += 1
         await self.dp.feed_update(
@@ -184,7 +203,7 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
     # ------------------------------------------------------------- базовое
 
     async def test_start_and_help(self):
-        self.assertIn("дневник давления", (await self.send("/start")).lower())
+        self.assertIn("два раздела", (await self.send("/start")).lower())
         self.assertIn("/stats", await self.send("/help"))
         self.assertIn("ESC", await self.send("/about"))
 
@@ -211,9 +230,10 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("103", await self.send("190/115"))
 
     async def test_garbage_gets_a_hint(self):
-        self.assertIn("давление", (await self.send("привет")).lower())
+        self.assertIn("120/80", await self.send("привет"))
         self.assertIn("120/80", await self.send("12080"))
         self.assertEqual(await self.db.count_measurements(USER_ID), 0)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
 
     async def test_swapped_numbers_explained(self):
         self.assertIn("Верхнее должно быть больше", await self.send("80/120"))
@@ -223,6 +243,91 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         for _ in range(3):
             await self.send("130/85 70")
         self.assertIn("За 7 дней", self.bot.texts[-1])
+
+    # ------------------------------------------------------------- разделы
+
+    async def test_menu_switches_section(self):
+        self.assertIn("Давление", await self.send("/menu"))
+        await self.click("go:money")
+        self.assertEqual((await self.db.ensure_user(USER_ID)).section, "money")
+        self.assertIn("Деньги", self.bot.edits[-1])
+
+    async def test_money_entry_and_stats(self):
+        await self.click("go:money")
+        answer = await self.send("кофе 300")
+        self.assertIn("300", answer)
+        self.assertIn("Кафе", answer)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)
+
+        report = await self.send("/stats")
+        self.assertIn("Расходы", report)
+        self.assertIn("Куда ушло", report)
+
+    async def test_income_through_plus(self):
+        await self.click("go:money")
+        answer = await self.send("+90000 зарплата")
+        self.assertIn("Доход", answer)
+        self.assertIn("Зарплата", answer)
+        self.assertIn("Остаток", await self.send("/balance"))
+
+    async def test_pressure_is_recognised_from_money_section(self):
+        await self.click("go:money")
+        answer = await self.send("120/80 68")
+        self.assertIn("120/80", answer)
+        self.assertEqual(await self.db.count_measurements(USER_ID), 1)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+
+    async def test_expense_is_recognised_from_pressure_section(self):
+        answer = await self.send("такси 450")
+        self.assertIn("450", answer)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)
+        self.assertEqual(await self.db.count_measurements(USER_ID), 0)
+
+    async def test_stats_follows_the_section(self):
+        await self.send("120/80 68")
+        await self.send("кофе 300")
+
+        self.assertIn("Давление", await self.send("/stats"))
+        await self.click("go:money")
+        self.assertIn("Деньги", await self.send("/stats"))
+
+    async def test_money_commands_are_absent_in_pressure(self):
+        # /limit принадлежит деньгам и работает всегда — он не общий
+        self.assertIn("лимит", (await self.send("/limit")).lower())
+
+    async def test_last_and_undo_follow_the_section(self):
+        await self.send("120/80")
+        await self.click("go:money")
+        await self.send("кофе 300")
+
+        self.assertIn("Кафе", await self.send("/last"))
+        self.assertIn("Удалил", await self.send("/undo"))
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+        self.assertEqual(await self.db.count_measurements(USER_ID), 1)
+
+    async def test_money_categories_and_limits(self):
+        await self.click("go:money")
+        self.assertIn("Расходы", await self.send("/cats"))
+        self.assertIn("Пицца", await self.send("/addcat 🍕 Пицца, додо"))
+        await self.send("додо 700")
+        stored = (await self.db.last_transactions(USER_ID))[0]
+        self.assertEqual(stored.category_name, "Пицца")
+
+        self.assertIn("Установил", await self.send("/limit 1000"))
+        self.assertIn("🔴", await self.send("шаурма 500"))
+        self.assertIn("Всего за месяц", await self.send("/limits"))
+
+    async def test_money_export_is_csv(self):
+        await self.click("go:money")
+        await self.send("кофе 300")
+        await self.send("/export")
+        payload = self.bot.documents()[-1].document.data.decode("utf-8-sig")
+        self.assertIn("кофе", payload)
+        self.assertIn("расход", payload)
+
+    async def test_voice_without_recogniser_explains_itself(self):
+        await self.send_voice()
+        self.assertIn("Голосовые", self.bot.texts[-1])
 
     # ------------------------------------------------- показатели здоровья
 
@@ -292,7 +397,7 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.count_measurements(USER_ID), 1)
 
         # состояние сброшено — обычный текст снова просто подсказка
-        self.assertIn("давление", (await self.send("привет")).lower())
+        self.assertIn("120/80", await self.send("привет"))
 
     async def test_cancel_leaves_the_flow(self):
         await self.send("/add")
@@ -388,7 +493,7 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("08:00", listing)
         self.assertIn("21:00", listing)
 
-        await self.click("remdel:08:00")
+        await self.click("remdel:pressure:08:00")
         self.assertNotIn("08:00", self.bot.edits[-1])
         self.assertIn("21:00", self.bot.edits[-1])
 
