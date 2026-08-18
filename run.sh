@@ -117,4 +117,14 @@ fi
 echo
 say "Запускаю бота. Открой его в Telegram и напиши /start"
 printf "%s\n\n" "${DIM}Остановить — Ctrl+C. Пока это окно открыто, бот работает.${OFF}"
-exec "$VENV_PY" -m bot.main
+
+# Код 42 — бот обновился и просит поднять его заново с новым кодом.
+# Любой другой код означает обычную остановку, и цикл завершается.
+while true; do
+    "$VENV_PY" -m bot.main
+    code=$?
+    [ "$code" -eq 42 ] || exit "$code"
+    echo
+    say "Обновление установлено, поднимаю бота заново…"
+    "$VENV_PY" -m pip install --quiet -r requirements.txt || true
+done

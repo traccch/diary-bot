@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import re
 import tempfile
@@ -30,6 +31,7 @@ from aiogram.types import CallbackQuery, Chat, Message, Update, User
 from bot.db import Database
 from bot.handlers import build_router
 from bot.middlewares import UserMiddleware
+from bot.updater import UpdateResult, UpdateStatus
 
 CHAT_ID = 555
 USER_ID = 777
@@ -82,6 +84,27 @@ class RecordingBot(Bot):
         return [call for call in self.calls if isinstance(call, SendPhoto)]
 
 
+class FakeUpdater:
+    """Обновлятель без git: отдаёт заданный ответ и запоминает вызовы."""
+
+    def __init__(self) -> None:
+        self.status = UpdateStatus(
+            branch="main", local="0000000", remote="0000000", behind=0
+        )
+        self.result = UpdateResult(True, "Обновился. Перезапускаюсь.", restart=True)
+        self.applied = 0
+
+    def is_git_repo(self) -> bool:
+        return True
+
+    async def check(self) -> UpdateStatus:
+        return self.status
+
+    async def apply(self, run_tests: bool = True) -> UpdateResult:
+        self.applied += 1
+        return self.result
+
+
 _dispatcher: Dispatcher | None = None
 
 
@@ -116,6 +139,11 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
 
         self.dp = get_dispatcher()
         self.dp["db"] = self.db
+        self.updater = FakeUpdater()
+        self.dp["updater"] = self.updater
+        self.dp["owner_id"] = None
+        self.restart_event = asyncio.Event()
+        self.dp["restart_event"] = self.restart_event
 
         self.bot = RecordingBot()
         self._update_id = 0
@@ -377,6 +405,38 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.count_measurements(USER_ID), 1)
 
         await self.click("rem:snooze")  # тихо ставит отложенное напоминание
+
+    # ---------------------------------------------------------- обновление
+
+    async def test_version_when_up_to_date(self):
+        self.assertIn("Последняя версия", await self.send("/version"))
+
+    async def test_update_offers_a_button(self):
+        self.updater.status = UpdateStatus(
+            branch="main", local="aaaaaaa", remote="bbbbbbb", behind=2,
+            messages=["Починил разбор сна", "Добавил график веса"],
+        )
+        answer = await self.send("/update")
+        self.assertIn("Есть обновление", answer)
+        self.assertIn("Починил разбор сна", answer)
+
+        await self.click("upd:apply")
+        self.assertEqual(self.updater.applied, 1)
+        self.assertIn("Перезапускаюсь", self.bot.texts[-1])
+        self.assertTrue(self.restart_event.is_set())
+
+    async def test_failed_update_does_not_restart(self):
+        self.updater.result = UpdateResult(False, "Не прошла тесты, вернул прежнюю.")
+        await self.click("upd:apply")
+        self.assertIn("вернул прежнюю", self.bot.texts[-1])
+        self.assertFalse(self.restart_event.is_set())
+
+    async def test_only_owner_can_update(self):
+        self.dp["owner_id"] = 999_999
+        self.assertIn("только для владельца", await self.send("/update"))
+        await self.click("upd:apply")
+        self.assertEqual(self.updater.applied, 0)
+        self.assertFalse(self.restart_event.is_set())
 
     # ---------------------------------------------------------- настройки
 

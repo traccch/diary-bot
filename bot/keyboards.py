@@ -73,6 +73,14 @@ def export_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def update_actions() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬇️ Обновить бота", callback_data="upd:apply")]
+        ]
+    )
+
+
 def reminder_actions() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

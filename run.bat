@@ -90,5 +90,14 @@ echo.
 echo   Запускаю бота. Открой его в Telegram и напиши /start
 echo   Остановить — Ctrl+C. Пока это окно открыто, бот работает.
 echo.
+
+rem Код 42 — бот обновился и просит поднять его заново с новым кодом.
+:loop
 "%VENV_PY%" -m bot.main
+if %errorlevel% equ 42 (
+    echo.
+    echo   Обновление установлено, поднимаю бота заново...
+    "%VENV_PY%" -m pip install --quiet -r requirements.txt
+    goto :loop
+)
 pause

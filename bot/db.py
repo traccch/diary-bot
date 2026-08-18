@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_metrics_user_kind ON metrics(user_id, kind, on_date);
+
+-- Служебные пометки бота: например, о каком обновлении владельцу уже сказали.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -229,6 +235,27 @@ class Database:
             target_dia=row["target_dia"],
             skip_if_measured=bool(row["skip_if_measured"]),
         )
+
+    async def owner_id(self) -> Optional[int]:
+        """Хозяин бота — тот, кто написал ему первым."""
+        cur = await self.conn.execute(
+            "SELECT user_id FROM users ORDER BY created_at, user_id LIMIT 1"
+        )
+        row = await cur.fetchone()
+        return row["user_id"] if row else None
+
+    async def get_meta(self, key: str) -> Optional[str]:
+        cur = await self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
+        row = await cur.fetchone()
+        return row["value"] if row else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        await self.conn.commit()
 
     async def set_tz(self, user_id: int, tz: str) -> None:
         await self.conn.execute("UPDATE users SET tz = ? WHERE user_id = ?", (tz, user_id))
