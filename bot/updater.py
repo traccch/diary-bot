@@ -111,7 +111,16 @@ class Updater:
                 "Помогает переустановка через git clone."
             )
         branch = await self.branch()
-        await self._git("fetch", "--quiet", "origin", branch)
+        try:
+            await self._git("fetch", "--quiet", "origin", branch)
+        except UpdateError as exc:
+            # ветку могли переименовать на GitHub — git скажет об этом невнятно
+            if "couldn't find remote ref" in str(exc).lower():
+                raise UpdateError(
+                    f"В репозитории больше нет ветки {branch} — похоже, её переименовали. "
+                    "Помогает `git checkout main` в папке бота или свежий git clone."
+                ) from exc
+            raise
 
         upstream = f"origin/{branch}"
         behind_raw = await self._git("rev-list", "--count", f"HEAD..{upstream}")

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from bot.db import Database
 from bot.handlers.update import is_owner, render_status
-from bot.updater import UpdateWatcher, Updater
+from bot.updater import UpdateError, UpdateWatcher, Updater
 
 GIT = shutil.which("git")
 
@@ -101,6 +101,14 @@ class UpdaterTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Есть обновление", render_status(status))
         self.assertIn("Добавил график веса", render_status(status))
+
+    async def test_renamed_branch_is_explained(self):
+        """Ветку переименовали на сервере — git ругается невнятно, бот объясняет."""
+        git(self.clone, "branch", "-m", "старое-имя")
+        git(self.clone, "branch", "--set-upstream-to=origin/main", "старое-имя")
+        with self.assertRaises(UpdateError) as caught:
+            await self.updater.check()
+        self.assertIn("переименовали", str(caught.exception))
 
     async def test_not_a_repo(self):
         plain = Updater(root=Path(self._tmp.name) / "origin" / "tests")
