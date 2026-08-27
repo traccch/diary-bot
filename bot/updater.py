@@ -18,12 +18,22 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Awaitable, Callable, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
 #: С таким кодом процесс просит скрипт запуска поднять его заново.
 RESTART_CODE = 42
+
+#: Шаги обновления, о которых сообщаем наружу. Обновление идёт минуту-другую,
+#: и всё это время бот молчал — со стороны неотличимо от зависшего.
+PULL = "pull"
+DEPS = "deps"
+TESTS = "tests"
+RESTART = "restart"
+
+#: Куда сообщать о ходе дела. None — молча, как раньше.
+Progress = Optional[Callable[[str], Awaitable[None]]]
 
 GIT_TIMEOUT = 120
 PIP_TIMEOUT = 900  # matplotlib и numpy ставятся долго
@@ -74,6 +84,16 @@ async def run_command(
         await process.wait()
         raise UpdateError(f"Команда {' '.join(args[:2])} не уложилась в {timeout} с")
     return process.returncode, stdout.decode("utf-8", "replace").strip()
+
+
+async def _step(progress: Progress, step: str) -> None:
+    """Сообщает о шаге, но не даёт отчёту сорвать обновление."""
+    if progress is None:
+        return
+    try:
+        await progress(step)
+    except Exception:  # noqa: BLE001 - сообщение о ходе дела важнее самого дела не бывает
+        logger.debug("Не смог сообщить о шаге %s", step, exc_info=True)
 
 
 class Updater:
@@ -158,7 +178,9 @@ class Updater:
         tail = output.strip().splitlines()
         return code == 0, "\n".join(tail[-6:])
 
-    async def apply(self, run_tests: bool = True) -> UpdateResult:
+    async def apply(
+        self, run_tests: bool = True, progress: Progress = None
+    ) -> UpdateResult:
         """Забирает новую версию, проверяет её и просит перезапуск."""
         if not self.is_git_repo():
             return UpdateResult(False, "Обновляться неоткуда: это не git-репозиторий.")
@@ -175,6 +197,7 @@ class Updater:
             return UpdateResult(True, "И так последняя версия, обновлять нечего.")
 
         before = await self.commit()
+        await _step(progress, PULL)
         try:
             await self._git("merge", "--ff-only", f"origin/{status.branch}")
         except UpdateError as exc:
@@ -182,12 +205,14 @@ class Updater:
 
         try:
             if await self._requirements_changed(before):
+                await _step(progress, DEPS)
                 await self._install_requirements()
         except UpdateError as exc:
             await self._rollback(before)
             return UpdateResult(False, f"{exc}\nВернул прежнюю версию.")
 
         if run_tests:
+            await _step(progress, TESTS)
             passed, tail = await self._run_tests()
             if not passed:
                 await self._rollback(before)
@@ -197,6 +222,7 @@ class Updater:
                     f"бот работает как работал.\n\n<code>{tail}</code>",
                 )
 
+        await _step(progress, RESTART)
         after = await self.commit()
         return UpdateResult(
             True,

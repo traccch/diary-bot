@@ -8,26 +8,105 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..db import Database
 from ..formatting import esc
 from ..keyboards import update_actions
-from ..updater import UpdateError, Updater
+from ..updater import DEPS, PULL, RESTART, TESTS, UpdateError, Updater
 
 router = Router(name="update")
 logger = logging.getLogger(__name__)
 
 NOT_OWNER = "Эта команда только для владельца бота."
 
-WORKING = (
-    "⏳ Обновляюсь: забираю код, проверяю зависимости и прогоняю тесты.\n"
-    "<i>Может занять пару минут — если менялись библиотеки, дольше.</i>"
+#: Шаги обновления в том порядке, в каком их видит человек.
+STEPS: tuple[tuple[str, str], ...] = (
+    (PULL, "Забираю новый код"),
+    (DEPS, "Ставлю зависимости"),
+    (TESTS, "Прогоняю тесты"),
+    (RESTART, "Перезапускаюсь"),
 )
+
+#: Как часто дорисовывать счётчик секунд у текущего шага.
+HEARTBEAT_SECONDS = 15
+
+
+def render_progress(current: Optional[str], seen: set[str], elapsed: int) -> str:
+    """Список шагов: сделанное — галочкой, текущее — с секундомером.
+
+    Секундомер здесь не украшение: тесты идут полминуты, зависимости — минуты,
+    и без бегущих секунд «⏳ Обновляюсь» неотличимо от зависшего бота.
+    """
+    reached = False
+    lines = ["⏳ <b>Обновляюсь</b>", ""]
+    for step, title in STEPS:
+        if step == current:
+            reached = True
+            lines.append(f"⏳ {title}… <i>{elapsed} с</i>")
+        elif reached:
+            lines.append(f"◦ {title}")
+        elif step in seen:
+            lines.append(f"✅ {title}")
+        elif current is None:
+            lines.append(f"◦ {title}")
+        else:
+            # шаг остался позади нетронутым — например, зависимости не менялись
+            lines.append(f"⏭ {title} <i>— не понадобилось</i>")
+    lines.append("")
+    lines.append("<i>Если тесты не сойдутся, верну прежнюю версию сам.</i>")
+    return "\n".join(lines)
+
+
+class ProgressReport:
+    """Одно сообщение, которое переписывается по ходу обновления."""
+
+    def __init__(self, message: Message, heartbeat: int = HEARTBEAT_SECONDS) -> None:
+        self._message = message
+        self._heartbeat = heartbeat
+        self._current: Optional[str] = None
+        self._seen: set[str] = set()
+        self._started = time.monotonic()
+        self._shown = ""
+        self._ticker: Optional[asyncio.Task[None]] = None
+
+    async def start(self) -> None:
+        self._sent = await self._message.answer(render_progress(None, set(), 0))
+        self._ticker = asyncio.create_task(self._tick(), name="update-progress")
+
+    async def __call__(self, step: str) -> None:
+        self._current = step
+        self._seen.add(step)
+        self._started = time.monotonic()
+        await self._draw()
+
+    async def finish(self, text: str) -> None:
+        if self._ticker is not None:
+            self._ticker.cancel()
+            self._ticker = None
+        await self._sent.edit_text(text)
+
+    async def _tick(self) -> None:
+        while True:
+            await asyncio.sleep(self._heartbeat)
+            await self._draw()
+
+    async def _draw(self) -> None:
+        elapsed = int(time.monotonic() - self._started)
+        text = render_progress(self._current, self._seen, elapsed)
+        if text == self._shown:
+            return
+        try:
+            await self._sent.edit_text(text)
+        except TelegramBadRequest:
+            pass  # то же самое сообщение Telegram считает ошибкой
+        self._shown = text
 
 
 async def is_owner(db: Database, owner_id: Optional[int], user_id: int) -> bool:
@@ -101,21 +180,22 @@ async def cb_apply(
     # отвечаем в исходное сообщение, а не в то, что вернул Telegram:
     # так ответ не зависит от того, привязан ли к ответу экземпляр бота
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(WORKING)
+    report = ProgressReport(callback.message)
+    await report.start()
 
     try:
-        result = await updater.apply()
+        result = await updater.apply(progress=report)
     except UpdateError as exc:
-        await callback.message.answer(f"⚠️ {esc(str(exc))}")
+        await report.finish(f"⚠️ {esc(str(exc))}")
         return
     except Exception:  # noqa: BLE001 - обновление не должно ронять бота
         logger.exception("Обновление сорвалось")
-        await callback.message.answer(
+        await report.finish(
             "⚠️ Обновление сорвалось, подробности в логах. Бот работает как работал."
         )
         return
 
-    await callback.message.answer(("✅ " if result.ok else "⚠️ ") + result.message)
+    await report.finish(("✅ " if result.ok else "⚠️ ") + result.message)
     if result.restart:
         await db.set_meta("notified_commit", "")
         restart_event.set()

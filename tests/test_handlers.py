@@ -54,11 +54,13 @@ class RecordingBot(Bot):
     async def __call__(self, method: TelegramMethod[TelegramType], request_timeout=None):
         self.calls.append(method)
         if isinstance(method, (SendMessage, SendDocument, SendPhoto)):
+            # .as_(self) — чтобы у ответа можно было вызвать edit_text,
+            # как у настоящего сообщения от Telegram
             return Message(
                 message_id=len(self.calls),
                 date=dt.datetime.now(dt.timezone.utc),
                 chat=Chat(id=CHAT_ID, type="private"),
-            )
+            ).as_(self)
         return True
 
     @property
@@ -105,6 +107,8 @@ class FakeUpdater:
         )
         self.result = UpdateResult(True, "Обновился. Перезапускаюсь.", restart=True)
         self.applied = 0
+        #: О каких шагах отчитаться по ходу дела (зависимости обычно не трогаем)
+        self.steps = ("pull", "tests", "restart")
 
     def is_git_repo(self) -> bool:
         return True
@@ -112,8 +116,10 @@ class FakeUpdater:
     async def check(self) -> UpdateStatus:
         return self.status
 
-    async def apply(self, run_tests: bool = True) -> UpdateResult:
+    async def apply(self, run_tests: bool = True, progress=None) -> UpdateResult:
         self.applied += 1
+        for step in self.steps if progress is not None else ():
+            await progress(step)
         return self.result
 
 
@@ -547,13 +553,34 @@ class HandlersTest(BotTestCase):
 
         await self.click("upd:apply")
         self.assertEqual(self.updater.applied, 1)
-        self.assertIn("Перезапускаюсь", self.bot.texts[-1])
+        self.assertIn("Перезапускаюсь", self.bot.edits[-1])
         self.assertTrue(self.restart_event.is_set())
+
+    async def test_update_shows_what_it_is_doing(self):
+        """Полторы минуты молчания неотличимы от зависшего бота."""
+        await self.click("upd:apply")
+
+        started = self.bot.texts[-1]
+        self.assertIn("Обновляюсь", started)
+        self.assertIn("Забираю новый код", started)
+
+        # шаги отмечаются по ходу дела, а не одним махом в конце
+        steps = "\n".join(self.bot.edits)
+        self.assertIn("✅ Забираю новый код", steps)
+        self.assertIn("⏳ Прогоняю тесты", steps)
+        self.assertIn("⏭ Ставлю зависимости", steps)  # requirements не менялись
+
+    async def test_progress_message_becomes_the_answer(self):
+        """Итог заменяет собой индикатор — лишних сообщений в чате не остаётся."""
+        before = len(self.bot.texts)
+        await self.click("upd:apply")
+        self.assertEqual(len(self.bot.texts), before + 1)
+        self.assertIn("Перезапускаюсь", self.bot.edits[-1])
 
     async def test_failed_update_does_not_restart(self):
         self.updater.result = UpdateResult(False, "Не прошла тесты, вернул прежнюю.")
         await self.click("upd:apply")
-        self.assertIn("вернул прежнюю", self.bot.texts[-1])
+        self.assertIn("вернул прежнюю", self.bot.edits[-1])
         self.assertFalse(self.restart_event.is_set())
 
     async def test_only_owner_can_update(self):

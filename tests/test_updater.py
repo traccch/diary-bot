@@ -294,5 +294,80 @@ class RestartFlagTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dispatcher.polling_timeout, 15)
 
 
+class ProgressTest(unittest.TestCase):
+    """Строка хода дела: что видно, пока обновление идёт."""
+
+    def render(self, current, seen, elapsed=0):
+        from bot.handlers.update import render_progress
+
+        return render_progress(current, set(seen), elapsed)
+
+    def test_nothing_started_yet(self):
+        text = self.render(None, ())
+        self.assertIn("◦ Забираю новый код", text)
+        self.assertNotIn("✅", text)
+
+    def test_current_step_has_a_stopwatch(self):
+        text = self.render("tests", ("pull", "tests"), 34)
+        self.assertIn("✅ Забираю новый код", text)
+        self.assertIn("⏳ Прогоняю тесты… <i>34 с</i>", text)
+        self.assertIn("◦ Перезапускаюсь", text)
+
+    def test_untouched_step_is_marked_as_skipped(self):
+        text = self.render("tests", ("pull", "tests"))
+        self.assertIn("⏭ Ставлю зависимости", text)
+
+
+class ApplyProgressTest(unittest.IsolatedAsyncioTestCase):
+    """Обновление отчитывается о шагах в том порядке, в каком их делает."""
+
+    async def test_steps_are_reported(self):
+        from bot import updater as updater_module
+
+        steps: list[str] = []
+
+        class Fake(updater_module.Updater):
+            def is_git_repo(self):
+                return True
+
+            async def is_dirty(self):
+                return False
+
+            async def check(self):
+                return updater_module.UpdateStatus(
+                    branch="main", local="aaa", remote="bbb", behind=1
+                )
+
+            async def commit(self, ref="HEAD"):
+                return "aaa"
+
+            async def _git(self, *args, timeout=None):
+                return ""
+
+            async def _requirements_changed(self, before):
+                return True
+
+            async def _install_requirements(self):
+                return None
+
+            async def _run_tests(self):
+                return True, ""
+
+        async def note(step: str) -> None:
+            steps.append(step)
+
+        result = await Fake().apply(progress=note)
+        self.assertTrue(result.restart)
+        self.assertEqual(steps, ["pull", "deps", "tests", "restart"])
+
+    async def test_broken_progress_does_not_break_the_update(self):
+        from bot.updater import _step
+
+        async def explode(step):
+            raise RuntimeError("телеграм не в духе")
+
+        await _step(explode, "pull")  # не должно бросить
+
+
 if __name__ == "__main__":
     unittest.main()
