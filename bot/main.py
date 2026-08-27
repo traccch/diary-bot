@@ -42,6 +42,7 @@ COMMANDS = [
     BotCommand(command="remind", description="Напоминания"),
     BotCommand(command="limit", description="Лимит на месяц"),
     BotCommand(command="update", description="Обновить бота"),
+    BotCommand(command="import", description="Загрузить операции файлом"),
     BotCommand(command="commands", description="Список всех команд"),
 ]
 

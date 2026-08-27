@@ -5,7 +5,7 @@ from aiogram import Router
 from ..english import handlers as english
 from ..money import handlers as money
 from ..pressure import handlers as pressure
-from . import common, health, hub, menu, reminders, router as shared, update
+from . import common, health, hub, menu, reminders, router as shared, transfer, update
 
 
 def build_router() -> Router:
@@ -13,6 +13,7 @@ def build_router() -> Router:
     root.include_router(common.router)
     root.include_router(menu.router)
     root.include_router(hub.router)
+    root.include_router(transfer.router)
     root.include_router(update.router)
     root.include_router(reminders.router)
     root.include_router(health.router)

@@ -64,6 +64,7 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
             ("📋 Последние", "do:money:last"),
             ("🏷 Категории", "do:money:cats"),
             ("🎯 Лимиты", "do:money:limits"),
+            ("📥 Загрузить файлом", "do:money:import"),
             ("🗑 Удалить последнюю", "do:money:undo"),
         ),
     ),
@@ -227,6 +228,10 @@ async def cb_money(
         await money_categories.cmd_cats(message, db, user)
     elif action == "limits":
         await money_categories.cmd_limits(message, db, user, today)
+    elif action == "import":
+        from .transfer import HOW_TO
+
+        await message.answer(HOW_TO)
 
 
 @router.callback_query(F.data.startswith("do:health:"))

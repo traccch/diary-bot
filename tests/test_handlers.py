@@ -50,6 +50,8 @@ class RecordingBot(Bot):
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         self.calls: list[TelegramMethod[Any]] = []
+        #: Что «скачается», когда хендлер попросит содержимое документа
+        self.file_content = b""
 
     async def __call__(self, method: TelegramMethod[TelegramType], request_timeout=None):
         self.calls.append(method)
@@ -62,6 +64,15 @@ class RecordingBot(Bot):
                 chat=Chat(id=CHAT_ID, type="private"),
             ).as_(self)
         return True
+
+    async def download(self, file, destination=None, **kwargs):
+        """Вместо похода в Telegram отдаёт заранее подложенное содержимое."""
+        if destination is not None:
+            destination.write(self.file_content)
+            return destination
+        from io import BytesIO
+
+        return BytesIO(self.file_content)
 
     @property
     def texts(self) -> list[str]:
@@ -196,6 +207,26 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
                     file_id="voice-1",
                     file_unique_id="u1",
                     duration=duration,
+                ),
+            }
+        )
+        await self.dp.feed_update(
+            self.bot, Update(update_id=self._update_id, message=message)
+        )
+
+    async def send_document(self, content: bytes, name: str = "operations.json") -> None:
+        from aiogram.types import Document
+
+        self.bot.file_content = content
+        self._update_id += 1
+        message = make_message("").model_copy(
+            update={
+                "text": None,
+                "document": Document(
+                    file_id="doc-1",
+                    file_unique_id="u1",
+                    file_name=name,
+                    file_size=len(content),
                 ),
             }
         )
