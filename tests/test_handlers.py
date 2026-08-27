@@ -78,6 +78,17 @@ class RecordingBot(Bot):
             if isinstance(call, EditMessageText) and call.text is not None
         ]
 
+    @property
+    def last_buttons(self) -> list[str]:
+        """Подписи кнопок последнего сообщения — по ним тест выбирает ответ."""
+        for call in reversed(self.calls):
+            markup = getattr(call, "reply_markup", None)
+            if markup is not None and getattr(markup, "inline_keyboard", None):
+                return [
+                    button.text for row in markup.inline_keyboard for button in row
+                ]
+        return []
+
     def documents(self) -> list[SendDocument]:
         return [call for call in self.calls if isinstance(call, SendDocument)]
 
@@ -132,7 +143,9 @@ def make_message(text: str, message_id: int = 1) -> Message:
     )
 
 
-class HandlersTest(unittest.IsolatedAsyncioTestCase):
+class BotTestCase(unittest.IsolatedAsyncioTestCase):
+    """Общая обвязка: своя база, общий диспетчер, бот-заглушка."""
+
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
@@ -200,10 +213,12 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+
+class HandlersTest(BotTestCase):
     # ------------------------------------------------------------- базовое
 
     async def test_start_and_help(self):
-        self.assertIn("два раздела", (await self.send("/start")).lower())
+        self.assertIn("три раздела", (await self.send("/start")).lower())
         self.assertIn("/stats", await self.send("/help"))
         self.assertIn("ESC", await self.send("/about"))
 
@@ -483,6 +498,11 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
     # ----------------------------------------------------------- напоминания
 
     async def test_reminder_lifecycle(self):
+        # умолчания проверяются в test_english, здесь важен сам цикл команд.
+        # ensure_user до удаления: пользователя создаёт первое же сообщение,
+        # и вместе с ним появляются напоминания по умолчанию.
+        await self.db.ensure_user(USER_ID)
+        await self.db.delete_all_reminders(USER_ID)
         self.assertIn("Напоминания", await self.send("/remind"))
         self.assertIn("08:00", await self.send("/remind 08:00"))
         self.assertIn("21:00", await self.send("/remind 21:00"))
@@ -568,3 +588,155 @@ class HandlersTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnglishTest(BotTestCase):
+    """Раздел английского: сессия карточек, квест, перевод слова, прогресс."""
+
+    async def to_english(self) -> None:
+        await self.click("go:english")
+
+    async def answer_correctly(self) -> str:
+        """Находит верную кнопку по тексту карточки и жмёт её."""
+        from bot.english import content
+
+        question = self.bot.texts[-1]
+        buttons = self.bot.last_buttons
+        for index, option in enumerate(buttons):
+            card = next(
+                (
+                    item
+                    for item in content.CARDS
+                    if option in (item.ru, item.en) and (item.en in question or item.ru in question)
+                ),
+                None,
+            )
+            if card is not None and (
+                (f"<b>{card.en}</b>" in question and option == card.ru)
+                or (f"<b>{card.ru}</b>" in question and option == card.en)
+            ):
+                await self.click(f"eng:a:{index}")
+                return self.bot.edits[-1]
+        # вопрос с пропуском: верный вариант — слово из примера
+        await self.click("eng:idk")
+        return self.bot.edits[-1]
+
+    async def test_menu_shows_progress(self):
+        answer = await self.send("/eng")
+        self.assertIn("Английский", answer)
+        self.assertIn("Слов в работе", answer)
+
+    async def test_session_asks_and_records(self):
+        await self.send("/eng")
+        await self.click("eng:more")
+
+        self.assertIn("1/", self.bot.texts[-1])
+        self.assertGreaterEqual(len(self.bot.last_buttons), 4)
+
+        feedback = await self.answer_correctly()
+        self.assertTrue(
+            any(word in feedback for word in ("Верно", "Нет", "Ничего страшного"))
+        )
+
+        progress = await self.db.eng_progress(USER_ID)
+        self.assertEqual(len(progress), 1, "ответ должен быть записан сразу")
+
+        day = await self.db.eng_day(USER_ID, dt.date.today())
+        self.assertEqual(day.answered, 1)
+
+    async def test_session_walks_to_the_end(self):
+        await self.send("/eng")
+        await self.click("eng:more")
+
+        for _ in range(30):
+            if "Сессия закончена" in self.bot.texts[-1]:
+                break
+            if self.bot.last_buttons and "Дальше" in self.bot.last_buttons[0]:
+                await self.click("eng:next")
+            else:
+                await self.click("eng:idk")
+
+        self.assertIn("Сессия закончена", self.bot.texts[-1])
+        self.assertIn("Серия", self.bot.texts[-1])
+
+    async def test_wrong_answer_resets_the_box(self):
+        from bot.english import srs
+
+        await self.db.ensure_user(USER_ID)
+        await self.db.eng_save_answer(
+            USER_ID, "games:loot", 3, dt.date.today(), True, False
+        )
+
+        await self.send("/eng")
+        await self.click("eng:more")
+        # ответим наверняка неверно: берём вариант, который не совпал бы
+        question = self.bot.texts[-1]
+        buttons = self.bot.last_buttons
+        wrong = next(
+            index
+            for index, text in enumerate(buttons)
+            if text not in question and text != "🤷 Не знаю"
+        )
+        await self.click(f"eng:a:{wrong}")
+
+        touched = [item for item in await self.db.eng_progress(USER_ID) if item.seen]
+        self.assertTrue(touched)
+        self.assertTrue(
+            all(item.box < srs.LEARNED_BOX for item in touched if item.lapses)
+        )
+
+    async def test_dont_know_is_not_a_mistake(self):
+        await self.send("/eng")
+        await self.click("eng:more")
+        await self.click("eng:idk")
+
+        self.assertIn("Ничего страшного", self.bot.edits[-1])
+        progress = await self.db.eng_progress(USER_ID)
+        self.assertEqual(progress[0].lapses, 0, "«не знаю» не портит статистику")
+
+    async def test_quest_can_be_finished(self):
+        await self.send("/quest")
+        self.assertIn("Слова, которые встретятся", self.bot.texts[-1])
+
+        await self.click("eq:go:tavern")
+        self.assertIn("Вопрос 1", self.bot.texts[-1])
+
+        for _ in range(3):
+            await self.click("eq:a:1")
+            if "Квест" in self.bot.texts[-1]:
+                break
+            await self.click("eq:next")
+
+        self.assertTrue(await self.db.eng_done_quests(USER_ID))
+
+    async def test_word_lookup_in_english_section(self):
+        await self.to_english()
+        answer = await self.send("loot")
+        self.assertIn("добыча", answer)
+
+        await self.click("eng:add:games:loot")
+        self.assertIsNotNone(await self.db.eng_progress_of(USER_ID, "games:loot"))
+
+    async def test_unknown_word_is_explained(self):
+        await self.to_english()
+        self.assertIn("нет", await self.send("supercalifragilistic"))
+
+    async def test_numbers_still_reach_their_sections(self):
+        """Из английского раздела давление и траты всё равно записываются."""
+        await self.to_english()
+        await self.send("120/80 68")
+        self.assertTrue(await self.db.last_measurements(USER_ID))
+
+        await self.send("кофе 300")
+        self.assertTrue(await self.db.last_transactions(USER_ID))
+
+    async def test_progress_screen(self):
+        await self.send("/engstats")
+        answer = self.bot.texts[-1]
+        self.assertIn("прогресс", answer.lower())
+        self.assertIn("Квесты", answer)
+
+    async def test_stats_command_works_in_section(self):
+        await self.to_english()
+        await self.send("/stats")
+        self.assertIn("Английский", self.bot.texts[-1])

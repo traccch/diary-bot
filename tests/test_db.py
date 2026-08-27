@@ -120,6 +120,8 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.pop_due_snoozes(NOW), [(USER_ID, "money")])
 
     async def test_reminders_crud(self):
+        # напоминания по умолчанию проверяются отдельно, здесь они мешают
+        await self.db.delete_all_reminders(USER_ID)
         morning = await self.db.add_reminder(USER_ID, dt.time(8, 0))
         evening = await self.db.add_reminder(USER_ID, dt.time(21, 0))
         self.assertIsNotNone(morning)
@@ -135,6 +137,8 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.list_reminders(USER_ID), [])
 
     async def test_due_candidates_carry_owner_settings(self):
+        # напоминания по умолчанию проверяются отдельно, здесь они мешают
+        await self.db.delete_all_reminders(USER_ID)
         await self.db.add_reminder(USER_ID, dt.time(8, 0))
         await self.db.set_tz(USER_ID, "Asia/Almaty")
         candidates = await self.db.due_candidates()
@@ -144,6 +148,8 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(candidates[0].last_fired_on)
 
     async def test_mark_fired(self):
+        # напоминания по умолчанию проверяются отдельно, здесь они мешают
+        await self.db.delete_all_reminders(USER_ID)
         reminder = await self.db.add_reminder(USER_ID, dt.time(8, 0))
         await self.db.mark_reminder_fired(reminder.id, NOW.date())
         candidates = await self.db.due_candidates()

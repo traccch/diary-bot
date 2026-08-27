@@ -63,6 +63,9 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
         await self.db.connect()
         await self.db.ensure_user(USER_ID)
+        # По умолчанию бот ставит напоминания сам — в этих тестах они бы
+        # срабатывали фоном и путали счёт. Умолчания проверяет test_english.
+        await self.db.delete_all_reminders(USER_ID)
         self.bot = FakeBot()
         self.scheduler = ReminderScheduler(self.bot, self.db)
 

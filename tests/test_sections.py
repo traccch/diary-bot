@@ -19,7 +19,9 @@ TODAY = dt.date(2026, 8, 17)
 
 class SectionsTest(unittest.TestCase):
     def test_known_sections(self):
-        self.assertEqual({s.key for s in sections.SECTIONS}, {"pressure", "money"})
+        self.assertEqual(
+            {s.key for s in sections.SECTIONS}, {"pressure", "money", "english"}
+        )
         self.assertEqual(sections.section_of("money").title, "Деньги")
 
     def test_unknown_falls_back_to_default(self):

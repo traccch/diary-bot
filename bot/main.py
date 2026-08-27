@@ -24,7 +24,9 @@ from .voice import build_transcriber
 logger = logging.getLogger(__name__)
 
 COMMANDS = [
-    BotCommand(command="menu", description="Разделы: давление и деньги"),
+    BotCommand(command="menu", description="Разделы: давление, деньги, английский"),
+    BotCommand(command="eng", description="Английский: карточки на 3 минуты"),
+    BotCommand(command="quest", description="Английский: квест-сцена"),
     BotCommand(command="stats", description="Сводка текущего раздела"),
     BotCommand(command="last", description="Последние записи"),
     BotCommand(command="undo", description="Удалить последнюю"),

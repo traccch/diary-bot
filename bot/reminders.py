@@ -42,6 +42,11 @@ REMINDER_TEXTS = {
         "Пока помнишь — пришли одной строкой: <code>кофе 300</code>, "
         "<code>такси 450</code>."
     ),
+    sections.ENGLISH: (
+        "⏰ <b>Пять минут английского</b>\n\n"
+        "Десять карточек — три минуты. Регулярность здесь важнее объёма: "
+        "короткий заход каждый день держит слова живыми."
+    ),
 }
 
 SNOOZE_TEXTS = {
@@ -50,6 +55,9 @@ SNOOZE_TEXTS = {
     ),
     sections.MONEY: (
         "⏰ <b>Напоминаю ещё раз</b>\n\nЗапиши траты: <code>кофе 300</code>."
+    ),
+    sections.ENGLISH: (
+        "⏰ <b>Напоминаю ещё раз</b>\n\nПять минут английского — /eng."
     ),
 }
 
@@ -122,15 +130,29 @@ class ReminderScheduler:
                 continue
 
             await self._db.mark_reminder_fired(candidate.reminder_id, now.date())
-            if candidate.topic == sections.PRESSURE and candidate.skip_if_measured:
-                since = now - dt.timedelta(minutes=SKIP_WINDOW_MINUTES)
-                if await self._db.has_measurement_since(candidate.user_id, since):
-                    logger.debug("Напоминание %s пропущено: замер уже есть", candidate.at)
-                    continue
+            if candidate.skip_if_measured and await self._already_done(candidate, now):
+                logger.debug(
+                    "Напоминание %s (%s) пропущено: сегодня уже сделано",
+                    candidate.at,
+                    candidate.topic,
+                )
+                continue
             text = REMINDER_TEXTS.get(candidate.topic, REMINDER_TEXTS[sections.PRESSURE])
             sent += await self._send(candidate.user_id, text, candidate.topic)
 
         return sent
+
+    async def _already_done(self, candidate, now: dt.datetime) -> bool:
+        """Дёргать человека, когда он уже всё сделал, — вернейший способ
+        научить его не замечать напоминания."""
+        if candidate.topic == sections.PRESSURE:
+            since = now - dt.timedelta(minutes=SKIP_WINDOW_MINUTES)
+            return await self._db.has_measurement_since(candidate.user_id, since)
+        if candidate.topic == sections.MONEY:
+            return await self._db.has_transaction_on(candidate.user_id, now.date())
+        if candidate.topic == sections.ENGLISH:
+            return await self._db.eng_practiced_since(candidate.user_id, now.date())
+        return False
 
     async def _send(self, user_id: int, text: str, topic: str = sections.PRESSURE) -> int:
         try:

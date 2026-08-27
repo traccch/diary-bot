@@ -20,6 +20,18 @@ def update_actions() -> InlineKeyboardMarkup:
 
 
 def reminder_actions(topic: str = "pressure") -> InlineKeyboardMarkup:
+    if topic == "english":
+        # У английского нет «записать»: там сразу начинается сессия карточек.
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="▶️ Начать", callback_data="eng:more"),
+                    InlineKeyboardButton(
+                        text="⏱ Через 15 минут", callback_data="rem:snooze:english"
+                    ),
+                ]
+            ]
+        )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [

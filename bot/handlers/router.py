@@ -21,6 +21,8 @@ from aiogram.types import Message, Voice
 from .. import sections
 from ..db import Database, UserSettings
 from ..keyboards import section_menu
+from ..english import handlers as english
+from ..english.lookup import try_lookup
 from ..money import handlers as money
 from ..money.handlers.entry import HINT as MONEY_HINT
 from ..money.handlers.entry import NOT_FOUND as MONEY_NOT_FOUND
@@ -38,7 +40,11 @@ logger = logging.getLogger(__name__)
 #: Команды, которые есть в обоих разделах и выполняются в текущем.
 SHARED_COMMANDS = ("stats", "report", "last", "undo", "del", "export", "chart", "graph")
 
-SECTION_MODULES = {sections.PRESSURE: pressure, sections.MONEY: money}
+SECTION_MODULES = {
+    sections.PRESSURE: pressure,
+    sections.MONEY: money,
+    sections.ENGLISH: english,
+}
 
 
 async def _save_in(
@@ -137,6 +143,14 @@ async def free_text_like(
 ) -> None:
     """Разбор строки так же, как обычного сообщения — общий путь для голоса."""
     current = user.section if user.section in SECTION_MODULES else sections.DEFAULT
+
+    # В разделе английского обычный текст — это чаще всего слово из игры или
+    # фильма: сначала пробуем перевести, а уже потом искать в нём цифры.
+    if current == sections.ENGLISH:
+        if await try_lookup(message, text, db, user):
+            return
+        current = sections.DEFAULT
+
     other = sections.MONEY if current == sections.PRESSURE else sections.PRESSURE
 
     # «120/80» — это давление в любом разделе: денежный разбор увидел бы здесь

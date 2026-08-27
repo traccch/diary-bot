@@ -343,6 +343,14 @@ class MoneyRepo:
         assert created is not None
         return created
 
+    async def has_transaction_on(self, user_id: int, on_date: dt.date) -> bool:
+        """Записывал ли пользователь что-нибудь за этот день."""
+        cur = await self.conn.execute(
+            "SELECT 1 FROM transactions WHERE user_id = ? AND happened_on = ? LIMIT 1",
+            (user_id, on_date.isoformat()),
+        )
+        return await cur.fetchone() is not None
+
     async def get_transaction(self, user_id: int, transaction_id: int) -> Optional[Transaction]:
         cur = await self.conn.execute(
             _TRANSACTION_SELECT + " WHERE t.user_id = ? AND t.id = ?", (user_id, transaction_id)
