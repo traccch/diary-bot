@@ -17,7 +17,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..db import Database
-from ..formatting import esc
+from ..formatting import esc, plural
 from ..keyboards import update_actions
 from ..updater import DEPS, PULL, RESTART, TESTS, UpdateError, Updater
 
@@ -126,7 +126,7 @@ def render_status(status) -> str:
 
     lines = [
         f"🆕 <b>Есть обновление</b>: {status.behind} "
-        + ("коммит" if status.behind == 1 else "коммитов"),
+        + plural(status.behind, "коммит", "коммита", "коммитов"),
         f"<code>{esc(status.local)}</code> → <code>{esc(status.remote)}</code>",
         "",
     ]

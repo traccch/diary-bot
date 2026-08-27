@@ -294,6 +294,24 @@ class RestartFlagTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dispatcher.polling_timeout, 15)
 
 
+class WordingTest(unittest.TestCase):
+    """«3 коммитов» — мелочь, но именно её человек видит первой."""
+
+    def status(self, behind: int):
+        from bot.handlers.update import render_status
+        from bot.updater import UpdateStatus
+
+        return render_status(
+            UpdateStatus(branch="main", local="aaa", remote="bbb", behind=behind)
+        )
+
+    def test_plural_forms(self):
+        self.assertIn("1 коммит\n", self.status(1) + "\n")
+        self.assertIn("3 коммита", self.status(3))
+        self.assertIn("5 коммитов", self.status(5))
+        self.assertIn("11 коммитов", self.status(11))
+
+
 class ProgressTest(unittest.TestCase):
     """Строка хода дела: что видно, пока обновление идёт."""
 

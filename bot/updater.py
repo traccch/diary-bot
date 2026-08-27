@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Optional, Sequence
 
+from .formatting import plural
+
 logger = logging.getLogger(__name__)
 
 #: С таким кодом процесс просит скрипт запуска поднять его заново.
@@ -228,7 +230,7 @@ class Updater:
             True,
             f"Обновился: <code>{before}</code> → <code>{after}</code> "
             f"({status.behind} "
-            + ("коммит" if status.behind == 1 else "коммитов")
+            + plural(status.behind, "коммит", "коммита", "коммитов")
             + "). Перезапускаюсь.",
             restart=True,
         )
@@ -306,7 +308,7 @@ class UpdateWatcher:
 
         lines = [
             f"🆕 <b>Вышло обновление бота</b>: {status.behind} "
-            + ("коммит" if status.behind == 1 else "коммитов"),
+            + plural(status.behind, "коммит", "коммита", "коммитов"),
             "",
         ]
         lines.extend(f"· {message}" for message in status.messages[:5])
