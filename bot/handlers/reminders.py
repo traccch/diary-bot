@@ -23,7 +23,7 @@ from ..reminders import SNOOZE_MINUTES
 
 router = Router(name="reminders")
 
-MAX_REMINDERS = 8
+MAX_REMINDERS = 12
 
 USAGE = (
     "⏰ <b>Напоминания</b>\n\n"
@@ -31,6 +31,8 @@ USAGE = (
     "<code>/remind 21:00</code> — можно добавить сколько нужно\n"
     "<code>/remind off</code> — выключить в этом разделе\n"
     "/reminders — список и настройки\n\n"
+    "<i>Вопросы про сон, шаги и пульс покоя приходят сами: ответить — одно "
+    "нажатие, пропустить — тоже. Убрать их можно в /reminders.</i>\n\n"
     "<i>Напоминание привязано к текущему разделу: в давлении зовёт измериться, "
     "в деньгах — записать траты. Раздел переключается в /menu.</i>"
 )
@@ -41,7 +43,7 @@ def _list_text(user: UserSettings, reminders: Sequence[Reminder]) -> str:
         return "⏰ Напоминаний нет.\n\nДобавить: <code>/remind 08:00</code>"
 
     lines = []
-    for section in sections.SECTIONS:
+    for section in sections.TOPICS:
         own = [item for item in reminders if item.topic == section.key]
         if not own:
             continue

@@ -34,6 +34,7 @@ DEFAULT_REMINDERS: dict[str, tuple[str, ...]] = {
     sections.PRESSURE: ("08:00", "21:00"),
     sections.MONEY: ("21:30",),
     sections.ENGLISH: ("13:00", "19:30"),
+    sections.HEALTH: ("09:30", "22:00"),
 }
 
 #: Целевые значения по умолчанию — домашние измерения (ESC/ESH: АГ при ≥135/85).

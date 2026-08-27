@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .db import Reminder
+from .prompts import Prompt
 from .sections import SECTIONS
 
 
@@ -43,6 +44,26 @@ def reminder_actions(topic: str = "pressure") -> InlineKeyboardMarkup:
         ]
     )
 
+
+
+def health_prompt(prompt: Prompt) -> InlineKeyboardMarkup:
+    """Готовые ответы на вопрос о самочувствии: нажал — записалось.
+
+    Нижний ряд есть всегда: у веса кнопок нет вовсе (шаг в сто граммов ими не
+    выбрать), да и в остальных случаях отказаться должно быть так же просто,
+    как ответить — иначе вопрос превращается в обязательство.
+    """
+    builder = InlineKeyboardBuilder()
+    for choice in prompt.choices:
+        builder.button(
+            text=choice.label, callback_data=f"hm:{prompt.kind}:{choice.value:g}"
+        )
+    builder.adjust(4)
+    builder.row(
+        InlineKeyboardButton(text="⏭ Не сегодня", callback_data="hm:skip"),
+        InlineKeyboardButton(text="⏱ Позже", callback_data="rem:snooze:health"),
+    )
+    return builder.as_markup()
 
 
 def reminder_list(reminders: Sequence[Reminder], skip_if_measured: bool) -> InlineKeyboardMarkup:

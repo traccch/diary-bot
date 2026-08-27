@@ -15,9 +15,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 
-from . import sections
+from . import prompts, sections
 from .db import Database
-from .keyboards import reminder_actions
+from .keyboards import health_prompt, reminder_actions
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ REMINDER_TEXTS = {
         "короткий заход каждый день держит слова живыми."
     ),
 }
+#: У самочувствия текст не постоянный: вопрос выбирается на месте, см. prompts.
 
 SNOOZE_TEXTS = {
     sections.PRESSURE: (
@@ -122,6 +123,9 @@ class ReminderScheduler:
         sent = 0
 
         for user_id, topic in await self._db.pop_due_snoozes(now_utc.replace(tzinfo=None)):
+            if topic == sections.HEALTH:
+                sent += await self._ask_health(user_id, None, now_utc)
+                continue
             sent += await self._send(user_id, SNOOZE_TEXTS.get(topic, SNOOZE_TEXTS[sections.PRESSURE]), topic)
 
         for candidate in await self._db.due_candidates():
@@ -137,10 +141,33 @@ class ReminderScheduler:
                     candidate.topic,
                 )
                 continue
+            if candidate.topic == sections.HEALTH:
+                sent += await self._ask_health(candidate.user_id, candidate.at, now_utc)
+                continue
+
             text = REMINDER_TEXTS.get(candidate.topic, REMINDER_TEXTS[sections.PRESSURE])
             sent += await self._send(candidate.user_id, text, candidate.topic)
 
         return sent
+
+    async def _ask_health(
+        self, user_id: int, at: Optional[dt.time], now_utc: dt.datetime
+    ) -> int:
+        """Мягкий вопрос про самочувствие — или молчание, если спрашивать нечего.
+
+        Молчание здесь не оплошность, а условие всей затеи: вопрос, который
+        приходит и тогда, когда ответ уже записан, перестают читать.
+        """
+        settings = await self._db.ensure_user(user_id)
+        now = local_now(settings.tz, now_utc)
+        already = await self._db.metrics_on(user_id, now.date())
+        prompt = prompts.pick(at or now.time(), now.date(), already)
+        if prompt is None:
+            logger.debug("Про самочувствие сегодня спрашивать нечего: %s", user_id)
+            return 0
+        return await self._send(
+            user_id, prompts.render(prompt), sections.HEALTH, health_prompt(prompt)
+        )
 
     async def _already_done(self, candidate, now: dt.datetime) -> bool:
         """Дёргать человека, когда он уже всё сделал, — вернейший способ
@@ -154,10 +181,16 @@ class ReminderScheduler:
             return await self._db.eng_practiced_since(candidate.user_id, now.date())
         return False
 
-    async def _send(self, user_id: int, text: str, topic: str = sections.PRESSURE) -> int:
+    async def _send(
+        self,
+        user_id: int,
+        text: str,
+        topic: str = sections.PRESSURE,
+        reply_markup=None,
+    ) -> int:
         try:
             await self._bot.send_message(
-                user_id, text, reply_markup=reminder_actions(topic)
+                user_id, text, reply_markup=reply_markup or reminder_actions(topic)
             )
         except TelegramAPIError as exc:
             logger.warning("Не отправил напоминание %s: %s", user_id, exc)

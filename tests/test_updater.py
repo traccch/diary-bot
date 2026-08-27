@@ -270,7 +270,8 @@ class RestartFlagTest(unittest.IsolatedAsyncioTestCase):
                 self.stopped = False
                 self._event = event
 
-            async def start_polling(self, bot):
+            async def start_polling(self, bot, polling_timeout=None):
+                self.polling_timeout = polling_timeout
                 while not self.stopped:
                     await asyncio.sleep(0.01)
 
@@ -285,10 +286,12 @@ class RestartFlagTest(unittest.IsolatedAsyncioTestCase):
             event.set()
 
         asyncio.create_task(request_restart())
-        code = await _poll_until_stopped(dispatcher, object(), event)
+        code = await _poll_until_stopped(dispatcher, object(), event, 15)
 
         self.assertEqual(code, RESTART_CODE)
         self.assertTrue(dispatcher.stopped)
+        # короткий long poll: через фильтрующую сеть длинный запрос обрывают
+        self.assertEqual(dispatcher.polling_timeout, 15)
 
 
 if __name__ == "__main__":

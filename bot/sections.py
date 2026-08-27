@@ -14,6 +14,11 @@ PRESSURE = "pressure"
 MONEY = "money"
 ENGLISH = "english"
 
+#: Тема напоминаний без своего раздела: мягкие вопросы про сон, шаги, пульс.
+#: Отдельным пунктом меню это было бы ещё одной анкетой, которую надо помнить
+#: и открывать; смысл как раз в том, чтобы показатели набирались по дороге.
+HEALTH = "health"
+
 
 @dataclass(frozen=True)
 class Section:
@@ -48,9 +53,25 @@ SECTIONS: tuple[Section, ...] = (
     ),
 )
 
+HEALTH_TOPIC = Section(
+    key=HEALTH,
+    title="Самочувствие",
+    icon="🫀",
+    hint="сон, шаги, пульс покоя — одним нажатием",
+)
+
+#: Всё, к чему может быть привязано напоминание: разделы и темы без раздела.
+TOPICS: tuple[Section, ...] = (*SECTIONS, HEALTH_TOPIC)
+
 BY_KEY = {section.key: section for section in SECTIONS}
+TOPICS_BY_KEY = {section.key: section for section in TOPICS}
 DEFAULT = PRESSURE
 
 
 def section_of(key: str) -> Section:
     return BY_KEY.get(key, BY_KEY[DEFAULT])
+
+
+def topic_of(key: str) -> Section:
+    """То же для тем напоминаний: у «самочувствия» раздела нет, а имя нужно."""
+    return TOPICS_BY_KEY.get(key, BY_KEY[DEFAULT])

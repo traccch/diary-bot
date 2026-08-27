@@ -221,6 +221,14 @@ class PressureRepo:
         row = await cur.fetchone()
         return _row_to_metric(row) if row else None
 
+    async def metrics_on(self, user_id: int, on_date: dt.date) -> set[str]:
+        """Какие показатели за этот день уже записаны — чтобы не спрашивать дважды."""
+        cur = await self.conn.execute(
+            "SELECT kind FROM metrics WHERE user_id = ? AND on_date = ?",
+            (user_id, on_date.isoformat()),
+        )
+        return {row["kind"] for row in await cur.fetchall()}
+
     async def metrics_between(
         self, user_id: int, kind: str, start: dt.date, end: dt.date
     ) -> list[Metric]:

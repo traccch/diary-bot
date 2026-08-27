@@ -17,6 +17,7 @@ from .config import load_config
 from .db import Database
 from .handlers import build_router
 from .middlewares import UserMiddleware
+from .netlog import install as install_netlog
 from .reminders import ReminderScheduler
 from .updater import RESTART_CODE, UpdateWatcher, Updater
 from .voice import build_transcriber
@@ -47,6 +48,7 @@ async def run() -> int:
         level=getattr(logging, config.log_level, logging.INFO),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
+    install_netlog()
 
     db = Database(config.db_path, config.default_tz)
     await db.connect()
@@ -106,7 +108,9 @@ async def run() -> int:
 
         logger.info("Бот @%s запущен", me.username)
         print(f"\n✓ Бот работает: https://t.me/{me.username}\n")
-        return await _poll_until_stopped(dispatcher, bot, restart_event)
+        return await _poll_until_stopped(
+            dispatcher, bot, restart_event, config.polling_timeout
+        )
     finally:
         await watcher.stop()
         await scheduler.stop()
@@ -115,10 +119,15 @@ async def run() -> int:
 
 
 async def _poll_until_stopped(
-    dispatcher: Dispatcher, bot: Bot, restart_event: asyncio.Event
+    dispatcher: Dispatcher,
+    bot: Bot,
+    restart_event: asyncio.Event,
+    polling_timeout: int = 15,
 ) -> int:
     """Крутит long polling, пока бота не остановят или он не попросит перезапуск."""
-    polling = asyncio.create_task(dispatcher.start_polling(bot))
+    polling = asyncio.create_task(
+        dispatcher.start_polling(bot, polling_timeout=polling_timeout)
+    )
     waiting = asyncio.create_task(restart_event.wait())
 
     done, _ = await asyncio.wait(

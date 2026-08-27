@@ -222,7 +222,7 @@ class DefaultRemindersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(reminders), expected)
         self.assertEqual(
             {item.topic for item in reminders},
-            {sections.PRESSURE, sections.MONEY, sections.ENGLISH},
+            {sections.PRESSURE, sections.MONEY, sections.ENGLISH, sections.HEALTH},
         )
 
     async def test_seeding_happens_once(self):

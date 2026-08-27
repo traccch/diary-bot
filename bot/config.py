@@ -22,6 +22,10 @@ class Config:
     #: кто первым написал боту.
     owner_id: Optional[int]
     auto_update_check: bool
+    #: Сколько секунд держать запрос обновлений открытым. Через фильтрующие
+    #: сети длинный запрос обрывают на полуслове, поэтому по умолчанию короче
+    #: аиограмовских 30 секунд.
+    polling_timeout: int
     voice: VoiceConfig
 
 
@@ -40,6 +44,10 @@ def load_config() -> Config:
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise RuntimeError(f"DEFAULT_TZ={tz!r} — неизвестный часовой пояс") from exc
 
+    raw_polling = os.getenv("POLLING_TIMEOUT", "15").strip()
+    polling_timeout = int(raw_polling) if raw_polling.isdigit() else 15
+    polling_timeout = max(1, min(polling_timeout, 50))
+
     raw_owner = os.getenv("OWNER_ID", "").strip()
     owner_id = int(raw_owner) if raw_owner.lstrip("-").isdigit() else None
 
@@ -51,6 +59,7 @@ def load_config() -> Config:
         owner_id=owner_id,
         auto_update_check=os.getenv("AUTO_UPDATE_CHECK", "1").strip().lower()
         not in {"0", "false", "no", "off"},
+        polling_timeout=polling_timeout,
         voice=VoiceConfig(
             binary=os.getenv("VOICE_BINARY", "").strip(),
             model=os.getenv("VOICE_MODEL", "").strip(),
