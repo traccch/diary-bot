@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
@@ -61,6 +61,34 @@ SNOOZE_TEXTS = {
         "⏰ <b>Напоминаю ещё раз</b>\n\nПять минут английского — /eng."
     ),
 }
+
+
+def next_fire(
+    times: Sequence[dt.time], now: dt.datetime
+) -> Optional[tuple[dt.time, dt.timedelta]]:
+    """Ближайшее напоминание и сколько до него ждать. None — напоминаний нет."""
+    if not times:
+        return None
+    best: Optional[tuple[dt.time, dt.timedelta]] = None
+    for at in times:
+        moment = dt.datetime.combine(now.date(), at)
+        if moment <= now:
+            moment += dt.timedelta(days=1)  # сегодня уже прошло — значит завтра
+        wait = moment - now
+        if best is None or wait < best[1]:
+            best = (at, wait)
+    return best
+
+
+def wait_text(wait: dt.timedelta) -> str:
+    """«через 8 ч 45 мин» — чтобы не считать в уме от текущего времени."""
+    minutes = int(wait.total_seconds() // 60)
+    if minutes < 1:
+        return "вот-вот"
+    hours, minutes = divmod(minutes, 60)
+    if not hours:
+        return f"через {minutes} мин"
+    return f"через {hours} ч" + (f" {minutes} мин" if minutes else "")
 
 
 def local_now(tz: str, now_utc: dt.datetime) -> dt.datetime:
@@ -195,4 +223,5 @@ class ReminderScheduler:
         except TelegramAPIError as exc:
             logger.warning("Не отправил напоминание %s: %s", user_id, exc)
             return 0
+        logger.info("Напоминание отправлено · %s", sections.topic_of(topic).title.lower())
         return 1

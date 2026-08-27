@@ -34,6 +34,15 @@ DEPS = "deps"
 TESTS = "tests"
 RESTART = "restart"
 
+#: Порядок шагов и их названия — одни и те же в чате и в консоли.
+STEP_ORDER: tuple[str, ...] = (PULL, DEPS, TESTS, RESTART)
+STEP_TITLES: dict[str, str] = {
+    PULL: "Забираю новый код",
+    DEPS: "Ставлю зависимости",
+    TESTS: "Прогоняю тесты",
+    RESTART: "Перезапускаюсь",
+}
+
 #: Куда сообщать о ходе дела. None — молча, как раньше.
 Progress = Optional[Callable[[str], Awaitable[None]]]
 
@@ -89,7 +98,8 @@ async def run_command(
 
 
 async def _step(progress: Progress, step: str) -> None:
-    """Сообщает о шаге, но не даёт отчёту сорвать обновление."""
+    """Сообщает о шаге — в консоль всегда, в чат если есть кому."""
+    logger.info("Обновление · %s", STEP_TITLES.get(step, step))
     if progress is None:
         return
     try:

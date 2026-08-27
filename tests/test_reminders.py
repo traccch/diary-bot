@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from bot.db import Database
-from bot.reminders import ReminderScheduler, is_due, local_now
+from bot.reminders import ReminderScheduler, is_due, local_now, next_fire, wait_text
 
 USER_ID = 777
 # 05:00 UTC — это 08:00 в Москве и 10:00 в Алматы
@@ -55,6 +55,30 @@ class LocalNowTest(unittest.TestCase):
 
     def test_broken_timezone_falls_back_to_utc(self):
         self.assertEqual(local_now("Мордор/Барад-Дур", NOW_UTC).hour, 5)
+
+
+class NextFireTest(unittest.TestCase):
+    """Ближайшее напоминание — для шапки в консоли."""
+
+    def setUp(self):
+        self.now = dt.datetime(2026, 8, 27, 23, 15)
+
+    def test_nearest_time_tomorrow(self):
+        at, wait = next_fire([dt.time(8, 0), dt.time(21, 30)], self.now)
+        self.assertEqual(at, dt.time(8, 0))
+        self.assertEqual(wait_text(wait), "через 8 ч 45 мин")
+
+    def test_nearest_time_today(self):
+        at, wait = next_fire([dt.time(8, 0), dt.time(23, 40)], self.now)
+        self.assertEqual(at, dt.time(23, 40))
+        self.assertEqual(wait_text(wait), "через 25 мин")
+
+    def test_no_reminders(self):
+        self.assertIsNone(next_fire([], self.now))
+
+    def test_round_hour_has_no_dangling_minutes(self):
+        _, wait = next_fire([dt.time(2, 15)], self.now)
+        self.assertEqual(wait_text(wait), "через 3 ч")
 
 
 class SchedulerTest(unittest.IsolatedAsyncioTestCase):

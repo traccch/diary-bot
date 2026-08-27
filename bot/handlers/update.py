@@ -19,7 +19,7 @@ from aiogram.types import CallbackQuery, Message
 from ..db import Database
 from ..formatting import esc, plural
 from ..keyboards import update_actions
-from ..updater import DEPS, PULL, RESTART, TESTS, UpdateError, Updater
+from ..updater import STEP_ORDER, STEP_TITLES, UpdateError, Updater
 
 router = Router(name="update")
 logger = logging.getLogger(__name__)
@@ -27,11 +27,8 @@ logger = logging.getLogger(__name__)
 NOT_OWNER = "Эта команда только для владельца бота."
 
 #: Шаги обновления в том порядке, в каком их видит человек.
-STEPS: tuple[tuple[str, str], ...] = (
-    (PULL, "Забираю новый код"),
-    (DEPS, "Ставлю зависимости"),
-    (TESTS, "Прогоняю тесты"),
-    (RESTART, "Перезапускаюсь"),
+STEPS: tuple[tuple[str, str], ...] = tuple(
+    (step, STEP_TITLES[step]) for step in STEP_ORDER
 )
 
 #: Как часто дорисовывать счётчик секунд у текущего шага.
