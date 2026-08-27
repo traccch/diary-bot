@@ -7,7 +7,9 @@ import datetime as dt
 import io
 
 from aiogram import F, Router
-from aiogram.filters import CommandObject
+from aiogram.filters import Command, CommandObject
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from ...db import Database, UserSettings
@@ -33,6 +35,73 @@ HINT = (
     "· <code>+90000 зарплата</code> — доход, через плюс\n\n"
     "Все команды — /help"
 )
+
+
+class Manual(StatesGroup):
+    """Запись через кнопку: бот спросил — человек ответил одной строкой."""
+
+    waiting_expense = State()
+    waiting_income = State()
+
+
+ASK_EXPENSE = (
+    "💸 <b>Что потратил?</b>\n"
+    "Одной строкой: <code>кофе 300</code>, <code>такси 450 вчера</code>, "
+    "<code>аренда 45к</code>."
+)
+ASK_INCOME = (
+    "💵 <b>Что пришло?</b>\n"
+    "Одной строкой: <code>зарплата 90000</code>, <code>вернули за билет 5000</code>."
+)
+
+
+async def ask_expense(message: Message, state: FSMContext) -> None:
+    await state.set_state(Manual.waiting_expense)
+    await message.answer(ASK_EXPENSE + "\n\n<i>Передумал — /cancel</i>")
+
+
+async def ask_income(message: Message, state: FSMContext) -> None:
+    await state.set_state(Manual.waiting_income)
+    await message.answer(ASK_INCOME + "\n\n<i>Передумал — /cancel</i>")
+
+
+@router.message(Command("cancel"), Manual.waiting_expense)
+@router.message(Command("cancel"), Manual.waiting_income)
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Отменил. Записать можно и просто текстом: <code>кофе 300</code>")
+
+
+@router.message(Manual.waiting_expense, F.text, ~F.text.startswith("/"))
+async def state_expense(
+    message: Message, state: FSMContext, db: Database, user: UserSettings, now: dt.datetime
+) -> None:
+    result = await save_transaction(message, message.text or "", db, user, now.date())
+    if result == SAVED:
+        await state.clear()
+    elif result == NOT_FOUND:
+        await message.answer(
+            "Пока не вижу суммы. Нужно число, например <code>кофе 300</code>.\n"
+            "<i>Выйти — /cancel</i>"
+        )
+
+
+@router.message(Manual.waiting_income, F.text, ~F.text.startswith("/"))
+async def state_income(
+    message: Message, state: FSMContext, db: Database, user: UserSettings, now: dt.datetime
+) -> None:
+    # в этом состоянии всё — доход, поэтому плюс дописываем сами
+    text = (message.text or "").strip()
+    result = await save_transaction(
+        message, text if text.startswith("+") else f"+{text}", db, user, now.date()
+    )
+    if result == SAVED:
+        await state.clear()
+    elif result == NOT_FOUND:
+        await message.answer(
+            "Пока не вижу суммы. Нужно число, например <code>зарплата 90000</code>.\n"
+            "<i>Выйти — /cancel</i>"
+        )
 
 
 async def save_transaction(

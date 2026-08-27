@@ -225,7 +225,8 @@ class HandlersTest(BotTestCase):
 
     async def test_start_and_help(self):
         self.assertIn("три раздела", (await self.send("/start")).lower())
-        self.assertIn("/stats", await self.send("/help"))
+        self.assertIn("Что сделать", await self.send("/help"))
+        self.assertIn("/stats", await self.send("/commands"))
         self.assertIn("ESC", await self.send("/about"))
 
     async def test_add_measurement(self):

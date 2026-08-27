@@ -86,7 +86,14 @@ async def run_command(
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env={
+            **os.environ,
+            "GIT_TERMINAL_PROMPT": "0",
+            # Без этого на Windows дочерний python пишет в трубу в кодировке
+            # консоли, и русский текст ошибок приезжает мусором.
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+        },
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)

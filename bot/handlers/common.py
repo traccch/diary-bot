@@ -11,6 +11,7 @@ from aiogram.types import Message
 
 from ..db import Database, UserSettings
 from ..formatting import esc
+from .hub import home_keyboard
 
 router = Router(name="common")
 
@@ -115,11 +116,19 @@ ABOUT = """ℹ️ <b>О шкале и об ограничениях</b>
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    await message.answer(START)
+    await message.answer(START, reply_markup=home_keyboard())
 
 
-@router.message(Command("help"))
+@router.message(Command("help", "hub", "do"))
 async def cmd_help(message: Message) -> None:
+    """Помощь — это не список команд, а кнопки «что сделать»."""
+    from .hub import HOME
+
+    await message.answer(HOME, reply_markup=home_keyboard())
+
+
+@router.message(Command("commands"))
+async def cmd_commands(message: Message) -> None:
     await message.answer(HELP)
 
 

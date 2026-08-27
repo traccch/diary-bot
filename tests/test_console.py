@@ -283,7 +283,9 @@ class StartupTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("давление 1", info.counts)
         self.assertGreater(info.reminders, 0)
         self.assertRegex(info.next_reminder, r"^\d\d:\d\d \(")
-        self.assertIn("diary.db", banner(info))
+        # путь к базе во временной папке бывает длинным — важно, что видно имя
+        self.assertTrue(info.db_path.endswith("diary.db"))
+        self.assertIn("База", banner(info))
 
 
 if __name__ == "__main__":

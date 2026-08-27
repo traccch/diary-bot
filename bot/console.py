@@ -149,6 +149,14 @@ def box(title: str, rows: Sequence[tuple[str, str]], palette: Palette) -> str:
     return "\n".join(lines)
 
 
+def short_path(path: str, keep: int = 2) -> str:
+    """Оставляет хвост пути: имя файла важнее, чем C:\\Users\\…\\AppData."""
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    if len(parts) <= keep:
+        return path
+    return "…/" + "/".join(parts[-keep:])
+
+
 @dataclass
 class Startup:
     """Всё, что стоит знать про запущенного бота."""

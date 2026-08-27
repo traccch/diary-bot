@@ -29,6 +29,7 @@ from .voice import Transcriber, build_transcriber
 logger = logging.getLogger(__name__)
 
 COMMANDS = [
+    BotCommand(command="help", description="Меню: всё кнопками, без команд"),
     BotCommand(command="menu", description="Разделы: давление, деньги, английский"),
     BotCommand(command="eng", description="Английский: карточки на 3 минуты"),
     BotCommand(command="quest", description="Английский: квест-сцена"),
@@ -41,7 +42,7 @@ COMMANDS = [
     BotCommand(command="remind", description="Напоминания"),
     BotCommand(command="limit", description="Лимит на месяц"),
     BotCommand(command="update", description="Обновить бота"),
-    BotCommand(command="help", description="Как пользоваться"),
+    BotCommand(command="commands", description="Список всех команд"),
 ]
 
 
@@ -147,7 +148,7 @@ async def collect_startup(
         except Exception:  # noqa: BLE001 - git мог быть не настроен
             logger.debug("Не смог узнать версию", exc_info=True)
 
-    info.db_path = config.db_path
+    info.db_path = console.short_path(config.db_path)
     try:
         info.db_bytes = os.path.getsize(config.db_path)
     except OSError:
