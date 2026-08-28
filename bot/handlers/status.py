@@ -211,6 +211,43 @@ async def cmd_log(message: Message, config_log_path: str = "") -> None:
     )
 
 
+@router.message(Command("voice", "golos"))
+async def cmd_voice(message: Message, transcriber=None) -> None:
+    """Состояние распознавания голосовых и что сделать, чтобы включить."""
+    from ..voice import VOICE_HOME, discover, find_ffmpeg
+
+    ready = bool(transcriber is not None and getattr(transcriber, "ready", False))
+    if ready:
+        binary, model = discover()
+        await message.answer(
+            "🎤 <b>Голосовые разбираю</b>\n"
+            f"Модель: <code>{esc(os.path.basename(model))}</code>\n\n"
+            "<i>Надиктуй: «сто двадцать на восемьдесят, пульс шестьдесят восемь» "
+            "или «кофе триста рублей». Расшифровка идёт на твоём компьютере, "
+            "запись никуда не уходит.</i>"
+        )
+        return
+
+    binary, model = discover()
+    lines = ["🎤 <b>Голосовые пока не разбираю</b>", ""]
+    lines.append(f"{'✅' if binary else '❌'} программа распознавания")
+    lines.append(f"{'✅' if model else '❌'} модель речи")
+    lines.append(f"{'✅' if find_ffmpeg() else '❌'} ffmpeg")
+    lines.append("")
+    lines.append(
+        "Чтобы включить, запусти в папке бота "
+        f"<code>{esc(str(VOICE_HOME.parent))}\\setup-voice.bat</code> — "
+        "он скачает недостающее сам (около 600 МБ) и всё проверит."
+    )
+    lines.append("")
+    lines.append(
+        "<i>Расшифровка идёт на твоём компьютере: запись никуда не уходит, "
+        "но и считает он сам — на слабой машине голосовое в десять секунд "
+        "разбирается секунд двадцать.</i>"
+    )
+    await message.answer("\n".join(lines))
+
+
 @router.message(Command("proxy", "vpn"))
 async def cmd_proxy(
     message: Message,

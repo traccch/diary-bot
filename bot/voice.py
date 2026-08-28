@@ -41,6 +41,47 @@ class Transcriber(Protocol):
     async def transcribe(self, audio: Path) -> str: ...
 
 
+#: Куда установщик кладёт распознаватель. Если он там есть, настраивать
+#: ничего не нужно: путей в .env хватило бы, но их приходится вписывать руками,
+#: а это ровно то место, где всё и ломается.
+VOICE_HOME = Path("tools") / "whisper"
+
+#: Как называется исполняемый файл whisper.cpp в разных сборках.
+BINARY_NAMES = ("whisper-cli.exe", "whisper-cli", "main.exe", "main")
+
+
+def discover(home: Path = VOICE_HOME) -> tuple[str, str]:
+    """Ищет распознаватель и модель там, куда их кладёт установщик."""
+    if not home.is_dir():
+        return "", ""
+
+    binary = ""
+    for name in BINARY_NAMES:
+        for found in home.rglob(name):
+            if found.is_file():
+                binary = str(found)
+                break
+        if binary:
+            break
+
+    models = sorted(home.rglob("ggml-*.bin"), key=lambda item: item.stat().st_size)
+    model = str(models[-1]) if models else ""  # берём самую крупную = точную
+    return binary, model
+
+
+def find_ffmpeg(home: Path = VOICE_HOME) -> str:
+    """ffmpeg из системы или из папки установщика."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    if home.is_dir():
+        for name in ("ffmpeg.exe", "ffmpeg"):
+            for candidate in home.rglob(name):
+                if candidate.is_file():
+                    return str(candidate)
+    return ""
+
+
 @dataclass(frozen=True)
 class VoiceConfig:
     binary: str = ""
@@ -50,6 +91,17 @@ class VoiceConfig:
     @property
     def enabled(self) -> bool:
         return bool(self.binary and self.model)
+
+    def with_discovered(self, home: Path = VOICE_HOME) -> "VoiceConfig":
+        """Дополняет незаданное найденным на диске."""
+        if self.enabled:
+            return self
+        binary, model = discover(home)
+        return VoiceConfig(
+            binary=self.binary or binary,
+            model=self.model or model,
+            language=self.language,
+        )
 
 
 class WhisperCppTranscriber:
@@ -61,7 +113,7 @@ class WhisperCppTranscriber:
 
     def __init__(self, config: VoiceConfig) -> None:
         self._config = config
-        self._ffmpeg = shutil.which("ffmpeg") or ""
+        self._ffmpeg = find_ffmpeg()
 
     @property
     def ready(self) -> bool:
@@ -75,7 +127,10 @@ class WhisperCppTranscriber:
 
     def why_not_ready(self) -> str:
         if not self._config.enabled:
-            return "распознавание речи не настроено (VOICE_BINARY и VOICE_MODEL в .env)"
+            return (
+                "распознавание речи не установлено — запусти "
+                "tools/setup-voice.bat (или setup-voice.sh)"
+            )
         if not Path(self._config.binary).exists():
             return f"не нашёл whisper.cpp по пути {self._config.binary}"
         if not Path(self._config.model).exists():
@@ -146,7 +201,11 @@ class DisabledTranscriber:
 
 
 def build_transcriber(config: Optional[VoiceConfig]) -> Transcriber:
-    if config is None or not config.enabled:
+    """Собирает распознаватель, дополняя настройки тем, что нашлось на диске."""
+    if config is None:
+        return DisabledTranscriber()
+    config = config.with_discovered()
+    if not config.enabled:
         return DisabledTranscriber()
     return WhisperCppTranscriber(config)
 

@@ -58,6 +58,7 @@ COMMANDS = [
     BotCommand(command="fuel", description="Топливо: литры, цены, расход"),
     BotCommand(command="status", description="Состояние бота и компьютера"),
     BotCommand(command="proxy", description="Проверить, есть ли локальный прокси"),
+    BotCommand(command="voice", description="Голосовые: состояние и установка"),
     BotCommand(command="import", description="Загрузить операции файлом"),
     BotCommand(command="commands", description="Список всех команд"),
 ]
