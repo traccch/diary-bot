@@ -9,7 +9,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from ..db import Database, UserSettings
 from ..formatting import esc
@@ -282,6 +287,38 @@ async def cmd_target(
     await message.answer(f"Цель: <b>ниже {systolic}/{diastolic}</b>. Буду считать по ней.")
 
 
+def check_reminders() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏰ Проверить напоминания", callback_data="do:set:remind")]
+        ]
+    )
+
+
+async def tz_changed(db: Database, user: UserSettings, zone: str) -> str:
+    """Ответ на смену пояса — с напоминанием о том, что часы не переехали.
+
+    Напоминания привязаны к часам, а не к поясу: 08:00 остаётся восемью утра
+    в новом поясе. Если время подбиралось под старый — например, ставили
+    04:00, чтобы получить свои восемь, — теперь оно значит буквально четыре
+    утра, и об этом лучше сказать сразу, а не в четыре утра.
+    """
+    lines = [
+        f"✅ Часовой пояс: <b>{esc(zone)}</b> · сейчас {zone_time(zone)}.",
+        "По нему теперь и напоминания.",
+    ]
+    reminders = await db.list_reminders(user.user_id)
+    if reminders:
+        times = ", ".join(f"<b>{item.label}</b>" for item in sorted(reminders, key=lambda r: r.at))
+        lines.append("")
+        lines.append(
+            f"<i>Напоминания стоят на {times} — это часы, а не сдвиг: они "
+            "останутся на тех же цифрах, но теперь по новому поясу. Если "
+            "какое-то время подбиралось под прежний, его стоит поправить.</i>"
+        )
+    return "\n".join(lines)
+
+
 def tz_text(user: UserSettings) -> str:
     now = zone_time(user.tz)
     return (
@@ -323,10 +360,7 @@ async def cmd_tz(
         return
 
     await db.set_tz(user.user_id, value)
-    await message.answer(
-        f"✅ Часовой пояс: <b>{esc(value)}</b> · сейчас {zone_time(value)}.\n"
-        "По нему теперь и напоминания."
-    )
+    await message.answer(await tz_changed(db, user, value), reply_markup=check_reminders())
 
 
 @router.callback_query(F.data.startswith("tz:"))
@@ -342,7 +376,5 @@ async def cb_tz(callback: CallbackQuery, db: Database, user: UserSettings) -> No
     await callback.answer(f"Часовой пояс: {zone}")
     if isinstance(callback.message, Message):
         await callback.message.edit_text(
-            f"✅ Часовой пояс: <b>{esc(zone)}</b> · сейчас {zone_time(zone)}.\n"
-            "По нему теперь и напоминания.",
-            reply_markup=None,
+            await tz_changed(db, user, zone), reply_markup=check_reminders()
         )

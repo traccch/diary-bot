@@ -725,6 +725,14 @@ class HandlersTest(BotTestCase):
         user = await self.db.ensure_user(USER_ID)
         self.assertEqual(user.tz, "Asia/Krasnoyarsk")
 
+    async def test_timezone_change_warns_about_the_clock(self):
+        """Часы не переезжают вместе с поясом — об этом лучше сказать сразу."""
+        answer = await self.send("/tz Asia/Krasnoyarsk")
+        self.assertIn("Asia/Krasnoyarsk", answer)
+        self.assertIn("это часы, а не сдвиг", answer)
+        self.assertIn("08:00", answer)  # перечислены нынешние времена
+        self.assertTrue(any("напоминания" in text.lower() for text in self.bot.last_buttons))
+
     async def test_timezone_by_russian_name(self):
         await self.send("/tz Новосибирск")
         self.assertTrue(any("Novosibirsk" in text for text in self.bot.last_buttons))

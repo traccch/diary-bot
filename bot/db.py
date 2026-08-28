@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS users (
     section          TEXT NOT NULL DEFAULT 'pressure',
     currency         TEXT NOT NULL DEFAULT '₽',
     reminders_seeded INTEGER NOT NULL DEFAULT 0,
+    seeded_topics    TEXT NOT NULL DEFAULT '',
     created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -236,8 +237,7 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
             await self.seed_default_reminders(user_id)
             return UserSettings(user_id=user_id, tz=self._default_tz)
 
-        if not row["reminders_seeded"]:
-            await self.seed_default_reminders(user_id)
+        await self.seed_default_reminders(user_id)
         return UserSettings(
             user_id=row["user_id"],
             tz=row["tz"],
@@ -249,24 +249,56 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
         )
 
     async def seed_default_reminders(self, user_id: int) -> int:
-        """Ставит напоминания по умолчанию — один раз за всё время.
+        """Ставит напоминания по умолчанию — по каждой теме ровно один раз.
 
-        INSERT OR IGNORE, поэтому уже настроенное вручную не задваивается,
-        а флаг в users не даёт вернуть выключенные напоминания обратно.
+        Раньше отметка была одна на всего человека, и тема, появившаяся в
+        новой версии бота, до старого дневника не доезжала: он был «уже
+        размечен». Теперь помним темы поимённо — новая приедет, выключенная
+        не вернётся.
         """
+        seeded = await self._seeded_topics(user_id)
         rows = [
             (user_id, topic, at)
             for topic, times in DEFAULT_REMINDERS.items()
+            if topic not in seeded
             for at in times
         ]
+        if not rows:
+            return 0
+
         await self.conn.executemany(
             "INSERT OR IGNORE INTO reminders (user_id, topic, at) VALUES (?, ?, ?)", rows
         )
         await self.conn.execute(
-            "UPDATE users SET reminders_seeded = 1 WHERE user_id = ?", (user_id,)
+            "UPDATE users SET reminders_seeded = 1, seeded_topics = ? WHERE user_id = ?",
+            (",".join(sorted(seeded | set(DEFAULT_REMINDERS))), user_id),
         )
         await self.conn.commit()
+        logger.info("Добавил напоминания по умолчанию: %s", len(rows))
         return len(rows)
+
+    async def _seeded_topics(self, user_id: int) -> set[str]:
+        """Темы, по которым умолчания уже предлагались.
+
+        У дневников, заведённых до появления этого списка, считаем
+        размеченным то, по чему напоминания есть сейчас: значит, их уже
+        ставили, а что удалено — то удалено осознанно.
+        """
+        cur = await self.conn.execute(
+            "SELECT seeded_topics, reminders_seeded FROM users WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return set()
+        stored = {item for item in (row["seeded_topics"] or "").split(",") if item}
+        if stored or not row["reminders_seeded"]:
+            return stored
+
+        cur = await self.conn.execute(
+            "SELECT DISTINCT topic FROM reminders WHERE user_id = ?", (user_id,)
+        )
+        return {item["topic"] for item in await cur.fetchall()}
 
     async def catch_up_fuel(self) -> int:
         """Разово вытаскивает заправки из трат, записанных до появления литров."""

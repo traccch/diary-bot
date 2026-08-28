@@ -131,9 +131,15 @@ class SchedulerHealthTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_defaults_include_health(self):
         self.assertIn(sections.HEALTH, DEFAULT_REMINDERS)
-        await self.db.seed_default_reminders(USER_ID)
-        topics = {item.topic for item in await self.db.list_reminders(USER_ID)}
-        self.assertIn(sections.HEALTH, topics)
+
+        fresh = memory_db()
+        await fresh.connect()
+        try:
+            await fresh.ensure_user(555)
+            topics = {item.topic for item in await fresh.list_reminders(555)}
+            self.assertIn(sections.HEALTH, topics)
+        finally:
+            await fresh.close()
 
 
 class HealthButtonsTest(BotTestCase):

@@ -6,6 +6,8 @@ import datetime as dt
 import tempfile
 import unittest
 
+from bot import sections
+from bot.db import DEFAULT_REMINDERS
 from bot.reminders import ReminderScheduler, is_due, local_now, next_fire, wait_text
 
 from .support import memory_db
@@ -171,3 +173,48 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeedingTest(unittest.IsolatedAsyncioTestCase):
+    """Умолчания по темам: новая тема доезжает, выключенная не возвращается."""
+
+    async def asyncSetUp(self):
+        self.db = memory_db()
+        await self.db.connect()
+
+    async def asyncTearDown(self):
+        await self.db.close()
+
+    async def topics(self, user_id: int = USER_ID) -> set:
+        return {item.topic for item in await self.db.list_reminders(user_id)}
+
+    async def test_new_user_gets_everything(self):
+        await self.db.ensure_user(USER_ID)
+        self.assertEqual(await self.topics(), set(DEFAULT_REMINDERS))
+
+    async def test_deleted_reminders_do_not_come_back(self):
+        await self.db.ensure_user(USER_ID)
+        await self.db.delete_all_reminders(USER_ID, sections.ENGLISH)
+
+        await self.db.ensure_user(USER_ID)
+        self.assertNotIn(sections.ENGLISH, await self.topics())
+
+    async def test_new_topic_reaches_an_old_diary(self):
+        """Дневник, заведённый до появления темы, должен её получить."""
+        await self.db.ensure_user(USER_ID)
+        # изображаем старую базу: тема ещё не существовала
+        await self.db.delete_all_reminders(USER_ID, sections.CAR)
+        await self.db.conn.execute(
+            "UPDATE users SET seeded_topics = '' WHERE user_id = ?", (USER_ID,)
+        )
+        await self.db.conn.commit()
+
+        await self.db.ensure_user(USER_ID)
+        self.assertIn(sections.CAR, await self.topics())
+
+    async def test_seeding_is_idempotent(self):
+        await self.db.ensure_user(USER_ID)
+        before = len(await self.db.list_reminders(USER_ID))
+        for _ in range(3):
+            await self.db.ensure_user(USER_ID)
+        self.assertEqual(len(await self.db.list_reminders(USER_ID)), before)
