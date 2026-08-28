@@ -318,10 +318,11 @@ async def cb_settings(
             "<i>По умолчанию 135/85 — порог для домашних измерений.</i>"
         )
     elif action == "tz":
+        from ..keyboards import timezone_choices
+        from .common import POPULAR_ZONES, tz_text, zone_time
+
         await message.answer(
-            f"🌍 Часовой пояс: <b>{user.tz}</b>\n"
-            "Сменить — пришли <code>/tz Asia/Almaty</code>.\n\n"
-            "<i>По нему же считаются напоминания.</i>"
+            tz_text(user), reply_markup=timezone_choices(POPULAR_ZONES, zone_time)
         )
     elif action == "help":
         await message.answer(common.HELP)

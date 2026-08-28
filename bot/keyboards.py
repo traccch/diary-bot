@@ -46,6 +46,16 @@ def reminder_actions(topic: str = "pressure") -> InlineKeyboardMarkup:
 
 
 
+def timezone_choices(options, clock=None) -> InlineKeyboardMarkup:
+    """Города с текущим временем: так выбирают вернее, чем по названию пояса."""
+    builder = InlineKeyboardBuilder()
+    for city, zone in options:
+        now = clock(zone) if clock else ""
+        builder.button(text=f"{city} {now}".strip(), callback_data=f"tz:{zone}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def health_prompt(prompt: Prompt) -> InlineKeyboardMarkup:
     """Готовые ответы на вопрос о самочувствии: нажал — записалось.
 

@@ -632,6 +632,27 @@ class HandlersTest(BotTestCase):
 
         self.assertIn("Europe/Moscow", await self.send("/tz"))
         self.assertIn("Asia/Almaty", await self.send("/tz Asia/Almaty"))
+
+    async def test_timezone_is_chosen_by_city(self):
+        """Пояс IANA не помнит никто, город знают все."""
+        await self.send("/tz")
+        self.assertTrue(any("Красноярск" in text for text in self.bot.last_buttons))
+
+        # материк в имени пояса — обычная ошибка, её надо прощать
+        answer = await self.send("/tz Europe/Krasnoyarsk")
+        self.assertIn("кажется, ты про это", answer)
+        self.assertTrue(any("Krasnoyarsk" in text for text in self.bot.last_buttons))
+
+        await self.click("tz:Asia/Krasnoyarsk")
+        user = await self.db.ensure_user(USER_ID)
+        self.assertEqual(user.tz, "Asia/Krasnoyarsk")
+
+    async def test_timezone_by_russian_name(self):
+        await self.send("/tz Новосибирск")
+        self.assertTrue(any("Novosibirsk" in text for text in self.bot.last_buttons))
+
+    async def test_unknown_timezone_explains_how(self):
+        self.assertIn("Красноярск", await self.send("/tz абракадабра"))
         self.assertIn("Не знаю", await self.send("/tz Мордор"))
 
     async def test_all_answers_use_valid_html(self):

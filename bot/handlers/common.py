@@ -2,16 +2,117 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from ..db import Database, UserSettings
 from ..formatting import esc
+from ..keyboards import timezone_choices
 from .hub import home_keyboard
+
+#: Пояса, в которых живёт большинство: подсказка вместо ввода строки IANA.
+POPULAR_ZONES: tuple[tuple[str, str], ...] = (
+    ("Калининград", "Europe/Kaliningrad"),
+    ("Москва", "Europe/Moscow"),
+    ("Самара", "Europe/Samara"),
+    ("Екатеринбург", "Asia/Yekaterinburg"),
+    ("Омск", "Asia/Omsk"),
+    ("Новосибирск", "Asia/Novosibirsk"),
+    ("Красноярск", "Asia/Krasnoyarsk"),
+    ("Иркутск", "Asia/Irkutsk"),
+    ("Якутск", "Asia/Yakutsk"),
+    ("Владивосток", "Asia/Vladivostok"),
+)
+
+
+#: Города по-русски: в именах поясов их нет, а человек пишет именно так.
+RU_ALIASES: dict[str, str] = {
+    "калининград": "Europe/Kaliningrad",
+    "москва": "Europe/Moscow",
+    "мск": "Europe/Moscow",
+    "питер": "Europe/Moscow",
+    "санкт-петербург": "Europe/Moscow",
+    "спб": "Europe/Moscow",
+    "сочи": "Europe/Moscow",
+    "казань": "Europe/Moscow",
+    "нижний новгород": "Europe/Moscow",
+    "самара": "Europe/Samara",
+    "саратов": "Europe/Saratov",
+    "волгоград": "Europe/Volgograd",
+    "екатеринбург": "Asia/Yekaterinburg",
+    "челябинск": "Asia/Yekaterinburg",
+    "уфа": "Asia/Yekaterinburg",
+    "тюмень": "Asia/Yekaterinburg",
+    "пермь": "Asia/Yekaterinburg",
+    "омск": "Asia/Omsk",
+    "новосибирск": "Asia/Novosibirsk",
+    "нск": "Asia/Novosibirsk",
+    "барнаул": "Asia/Barnaul",
+    "томск": "Asia/Tomsk",
+    "кемерово": "Asia/Novokuznetsk",
+    "новокузнецк": "Asia/Novokuznetsk",
+    "красноярск": "Asia/Krasnoyarsk",
+    "абакан": "Asia/Krasnoyarsk",
+    "норильск": "Asia/Krasnoyarsk",
+    "иркутск": "Asia/Irkutsk",
+    "улан-удэ": "Asia/Irkutsk",
+    "чита": "Asia/Chita",
+    "якутск": "Asia/Yakutsk",
+    "владивосток": "Asia/Vladivostok",
+    "хабаровск": "Asia/Vladivostok",
+    "магадан": "Asia/Magadan",
+    "южно-сахалинск": "Asia/Sakhalin",
+    "камчатка": "Asia/Kamchatka",
+    "петропавловск-камчатский": "Asia/Kamchatka",
+    "минск": "Europe/Minsk",
+    "киев": "Europe/Kyiv",
+    "алматы": "Asia/Almaty",
+    "астана": "Asia/Almaty",
+    "ташкент": "Asia/Tashkent",
+    "бишкек": "Asia/Bishkek",
+    "тбилиси": "Asia/Tbilisi",
+    "ереван": "Asia/Yerevan",
+    "баку": "Asia/Baku",
+}
+
+
+def suggest_zones(query: str, limit: int = 4) -> list[str]:
+    """Пояса, похожие на введённое. «Europe/Krasnoyarsk» → «Asia/Krasnoyarsk».
+
+    Материк в имени пояса запомнить невозможно, а город человек знает точно —
+    поэтому ищем по городу и предлагаем нажать, а не печатать заново.
+    """
+    text = query.strip().lower().replace("ё", "е")
+    alias = RU_ALIASES.get(text) or RU_ALIASES.get(text.replace("_", " "))
+    if alias:
+        return [alias]
+
+    text = text.replace(" ", "_")
+    city = text.rsplit("/", 1)[-1]
+    if not city:
+        return []
+
+    zones = available_timezones()
+    exact = sorted(zone for zone in zones if zone.lower().rsplit("/", 1)[-1] == city)
+    if exact:
+        return exact[:limit]
+    starts = sorted(
+        zone for zone in zones if zone.lower().rsplit("/", 1)[-1].startswith(city)
+    )
+    return starts[:limit]
+
+
+def zone_time(zone: str) -> str:
+    """Который час в этом поясе — так выбирать вернее, чем по названию."""
+    try:
+        return dt.datetime.now(ZoneInfo(zone)).strftime("%H:%M")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ""
 
 router = Router(name="common")
 
@@ -165,6 +266,16 @@ async def cmd_target(
     await message.answer(f"Цель: <b>ниже {systolic}/{diastolic}</b>. Буду считать по ней.")
 
 
+def tz_text(user: UserSettings) -> str:
+    now = zone_time(user.tz)
+    return (
+        f"🌍 Часовой пояс: <b>{esc(user.tz)}</b>"
+        + (f" · сейчас {now}" if now else "")
+        + "\n\nВыбери свой город кнопкой — по нему пойдут напоминания.\n"
+        "<i>Города нет в списке? Пришли <code>/tz Иркутск</code> — найду.</i>"
+    )
+
+
 @router.message(Command("tz"))
 async def cmd_tz(
     message: Message, command: CommandObject, db: Database, user: UserSettings
@@ -172,18 +283,50 @@ async def cmd_tz(
     value = (command.args or "").strip()
     if not value:
         await message.answer(
-            f"Часовой пояс: <b>{esc(user.tz)}</b>\nСменить: <code>/tz Europe/Berlin</code>"
+            tz_text(user), reply_markup=timezone_choices(POPULAR_ZONES, zone_time)
         )
         return
+
     try:
         ZoneInfo(value)
     except (ZoneInfoNotFoundError, ValueError):
+        found = suggest_zones(value)
+        if found:
+            await message.answer(
+                f"Пояса <code>{esc(value)}</code> нет, но, кажется, ты про это:",
+                reply_markup=timezone_choices(
+                    [(zone.rsplit("/", 1)[-1].replace("_", " "), zone) for zone in found],
+                    zone_time,
+                ),
+            )
+            return
         await message.answer(
-            "Не знаю такой часовой пояс. Нужен формат IANA, например "
-            "<code>Europe/Moscow</code> или <code>Asia/Almaty</code>."
+            "Не знаю такого часового пояса. Попробуй просто город — "
+            "<code>/tz Красноярск</code> — или выбери кнопкой в /tz."
         )
         return
+
     await db.set_tz(user.user_id, value)
     await message.answer(
-        f"Часовой пояс: <b>{esc(value)}</b>. По нему же теперь и напоминания."
+        f"✅ Часовой пояс: <b>{esc(value)}</b> · сейчас {zone_time(value)}.\n"
+        "По нему теперь и напоминания."
     )
+
+
+@router.callback_query(F.data.startswith("tz:"))
+async def cb_tz(callback: CallbackQuery, db: Database, user: UserSettings) -> None:
+    zone = (callback.data or "").split(":", 1)[1]
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        await callback.answer("Не знаю такого пояса", show_alert=True)
+        return
+
+    await db.set_tz(user.user_id, zone)
+    await callback.answer(f"Часовой пояс: {zone}")
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text(
+            f"✅ Часовой пояс: <b>{esc(zone)}</b> · сейчас {zone_time(zone)}.\n"
+            "По нему теперь и напоминания.",
+            reply_markup=None,
+        )

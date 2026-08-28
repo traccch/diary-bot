@@ -36,7 +36,7 @@ class FilterTest(unittest.TestCase):
         item = record(FAILED)
         self.assertTrue(self.filter.filter(item))
         self.assertEqual(item.levelname, "WARNING")
-        self.assertIn("VPN", item.getMessage())
+        self.assertIn("TELEGRAM_PROXY", item.getMessage())
 
     def test_next_ones_are_swallowed(self):
         self.filter.filter(record(FAILED))
@@ -65,6 +65,37 @@ class FilterTest(unittest.TestCase):
                 self.assertTrue(self.filter.filter(item))
                 self.assertEqual(item.levelname, "ERROR")
                 self.assertEqual(item.getMessage(), message)
+
+    def test_server_errors_get_their_own_explanation(self):
+        """502 — это Telegram приболел, и советовать тут VPN просто вредно."""
+        item = record(
+            "Failed to fetch updates - TelegramServerError: Telegram server says"
+            " - Bad Gateway"
+        )
+        self.assertTrue(self.filter.filter(item))
+        text = item.getMessage()
+        self.assertIn("на его стороне", text)
+        self.assertNotIn("прокси тут при", text)
+        self.assertEqual(item.levelname, "WARNING")
+
+    def test_change_of_cause_is_reported_at_once(self):
+        self.filter.filter(record(FAILED))
+        self.filter.filter(record(FAILED))
+
+        server = record("Failed to fetch updates - TelegramServerError: Bad Gateway")
+        self.assertTrue(self.filter.filter(server))
+        self.assertIn("на его стороне", server.getMessage())
+
+    def test_repeats_name_the_right_cause(self):
+        server = "Failed to fetch updates - TelegramServerError: Bad Gateway"
+        self.filter.filter(record(server))
+        for _ in range(4):
+            self.filter.filter(record(server))
+
+        self.clock.value = 301
+        item = record(server)
+        self.assertTrue(self.filter.filter(item))
+        self.assertIn("Telegram отвечал ошибкой ещё 5 раз", item.getMessage())
 
     def test_traceback_is_dropped_from_the_rewritten_line(self):
         item = record(FAILED)
@@ -101,6 +132,32 @@ class PollingTimeoutTest(unittest.TestCase):
         self.assertEqual(self.load("много"), 15)
         self.assertEqual(self.load("0"), 1)
         self.assertEqual(self.load("900"), 50)
+
+
+class ProxyConfigTest(unittest.TestCase):
+    """TELEGRAM_PROXY: адрес локального прокси, а не ключ VPN."""
+
+    def test_address_is_taken_as_is(self):
+        from bot.config import read_proxy
+
+        self.assertEqual(read_proxy(" socks5://127.0.0.1:2080 "), "socks5://127.0.0.1:2080")
+        self.assertEqual(read_proxy("http://127.0.0.1:8080"), "http://127.0.0.1:8080")
+        self.assertEqual(read_proxy(""), "")
+
+    def test_bare_host_and_port_get_a_scheme(self):
+        from bot.config import read_proxy
+
+        self.assertEqual(read_proxy("127.0.0.1:2080"), "socks5://127.0.0.1:2080")
+
+    def test_vpn_key_is_refused_with_an_explanation(self):
+        from bot.config import read_proxy
+
+        for key in ("vless://uuid@host:443?security=reality", "ss://abcdef@host:8388"):
+            with self.subTest(key=key):
+                with self.assertRaises(RuntimeError) as caught:
+                    read_proxy(key)
+                self.assertIn("не адрес прокси", str(caught.exception))
+                self.assertIn("socks5://", str(caught.exception))
 
 
 if __name__ == "__main__":

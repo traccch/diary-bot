@@ -35,11 +35,38 @@ NETWORK_ERRORS = (
     "TimeoutError",
 )
 
-HINT = (
-    "Соединение с Telegram рвётся и восстанавливается — обычно так ведёт себя "
-    "фильтрация трафика у провайдера. Бот работает: сообщения дойдут, "
-    "напоминания придут. Если хочется ровной связи — VPN."
+#: Ошибки на той стороне: сеть в порядке, приболел сам Telegram.
+SERVER_ERRORS = (
+    "TelegramServerError",
+    "Bad Gateway",
+    "Gateway Timeout",
+    "Internal Server Error",
+    "TelegramRetryAfter",
 )
+
+NETWORK = "network"
+SERVER = "server"
+
+HINTS = {
+    NETWORK: (
+        "Соединение с Telegram рвётся и восстанавливается — обычно так ведёт "
+        "себя фильтрация трафика у провайдера. Бот работает: сообщения дойдут, "
+        "напоминания придут. Ровнее будет через прокси — TELEGRAM_PROXY в .env."
+    ),
+    SERVER: (
+        "Telegram отвечает ошибкой сервера — это на его стороне, а не у тебя: "
+        "ни VPN, ни прокси тут ни при чём. Бот повторяет запрос сам, обычно "
+        "проходит за несколько минут."
+    ),
+}
+
+REPEATS = {
+    NETWORK: "Связь с Telegram рвалась ещё {count} {word}",
+    SERVER: "Telegram отвечал ошибкой ещё {count} {word}",
+}
+
+#: Совместимость со старым именем: раньше подсказка была одна.
+HINT = HINTS[NETWORK]
 
 
 class FlakyNetworkFilter(logging.Filter):
@@ -55,43 +82,59 @@ class FlakyNetworkFilter(logging.Filter):
         self._clock = clock or time.monotonic
         self._last_report: Optional[float] = None
         self._suppressed = 0
+        self._cause: Optional[str] = None
 
     @staticmethod
-    def looks_like_hiccup(record: logging.LogRecord) -> bool:
+    def cause(record: logging.LogRecord) -> Optional[str]:
+        """Из-за чего строка: сеть, сервер Telegram или это вообще не о том."""
         message = record.getMessage()
         if not any(marker in message for marker in HICCUP_MARKERS):
-            return False
+            return None
+        if any(error in message for error in SERVER_ERRORS):
+            return SERVER
+        if any(error in message for error in NETWORK_ERRORS):
+            return NETWORK
         if "Connection established" in message or "Sleep for" in message:
-            return True
-        return any(error in message for error in NETWORK_ERRORS)
+            # продолжение предыдущей истории: чьей она была, мы уже знаем
+            return "retry"
+        return None
+
+    @classmethod
+    def looks_like_hiccup(cls, record: logging.LogRecord) -> bool:
+        return cls.cause(record) is not None
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if not self.looks_like_hiccup(record):
+        cause = self.cause(record)
+        if cause is None:
             return True
+        if cause == "retry":
+            cause = self._cause or NETWORK  # повтор после чего-то, что уже видели
 
         now = self._clock()
         first_time = self._last_report is None
-        if first_time or now - self._last_report >= self._quiet:
-            self._rewrite(record, first_time)
+        # сменилась причина — это другая история, о ней стоит сказать сразу
+        changed = cause != self._cause
+        if first_time or changed or now - self._last_report >= self._quiet:
+            self._rewrite(record, first_time or changed, cause)
             self._last_report = now
+            self._cause = cause
             self._suppressed = 0
             return True
 
         self._suppressed += 1
         return False
 
-    def _rewrite(self, record: logging.LogRecord, first_time: bool) -> None:
+    def _rewrite(self, record: logging.LogRecord, first_time: bool, cause: str) -> None:
         """Ошибка библиотеки превращается в понятное предупреждение."""
         if first_time:
-            text = f"⚠️ {HINT}"
+            text = f"⚠️ {HINTS[cause]}"
         else:
             minutes = max(1, round(self._quiet / 60))
             times = self._suppressed + 1
-            text = (
-                f"⚠️ Связь с Telegram рвалась ещё {times} "
-                f"{plural(times, 'раз', 'раза', 'раз')} за последние {minutes} мин. "
-                "Бот работает."
+            head = REPEATS[cause].format(
+                count=times, word=plural(times, "раз", "раза", "раз")
             )
+            text = f"⚠️ {head} за последние {minutes} мин. Бот работает."
         record.msg = text
         record.args = ()
         record.levelno = logging.WARNING

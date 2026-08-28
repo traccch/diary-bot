@@ -26,7 +26,41 @@ class Config:
     #: сети длинный запрос обрывают на полуслове, поэтому по умолчанию короче
     #: аиограмовских 30 секунд.
     polling_timeout: int
+    #: Через какой прокси ходить к Telegram. Пусто — напрямую.
+    proxy: str
     voice: VoiceConfig
+
+
+#: Схемы, которые понимает клиент. Всё остальное — не прокси.
+PROXY_SCHEMES = ("http://", "https://", "socks5://", "socks5h://", "socks4://")
+
+#: Ключи VPN-приложений. Это не прокси: за ними стоит свой протокол,
+#: который умеет разбирать только клиент вроде Happ, v2rayN или sing-box.
+VPN_KEY_SCHEMES = ("vless://", "vmess://", "trojan://", "ss://", "ssconf://", "hysteria")
+
+PROXY_HELP = (
+    "TELEGRAM_PROXY={value!r} — это не адрес прокси.\n"
+    "  Нужен адрес вида socks5://127.0.0.1:2080 или http://127.0.0.1:8080.\n"
+    "  Ключ VPN (vless://…, vmess://…) сюда не подходит: его понимает только\n"
+    "  само VPN-приложение. Включи в нём режим локального прокси и впиши сюда\n"
+    "  адрес и порт, которые оно показывает."
+)
+
+
+def read_proxy(raw: str) -> str:
+    """Проверяет адрес прокси. Непонятное — лучше отвергнуть громко."""
+    value = raw.strip().strip('"').strip("'")
+    if not value:
+        return ""
+    lowered = value.lower()
+    if lowered.startswith(PROXY_SCHEMES):
+        return value
+    if lowered.startswith(VPN_KEY_SCHEMES):
+        raise RuntimeError(PROXY_HELP.format(value=value[:24] + "…"))
+    if ":" in value and "//" not in value:
+        # «127.0.0.1:2080» — понятно, что имелось в виду
+        return "socks5://" + value
+    raise RuntimeError(PROXY_HELP.format(value=value[:40]))
 
 
 def load_config() -> Config:
@@ -60,6 +94,7 @@ def load_config() -> Config:
         auto_update_check=os.getenv("AUTO_UPDATE_CHECK", "1").strip().lower()
         not in {"0", "false", "no", "off"},
         polling_timeout=polling_timeout,
+        proxy=read_proxy(os.getenv("TELEGRAM_PROXY", "")),
         voice=VoiceConfig(
             binary=os.getenv("VOICE_BINARY", "").strip(),
             model=os.getenv("VOICE_MODEL", "").strip(),

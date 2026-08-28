@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from typing import Optional
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -56,8 +58,15 @@ async def run() -> int:
     db = Database(config.db_path, config.default_tz)
     await db.connect()
 
+    try:
+        session = build_session(config.proxy)
+    except RuntimeError as exc:
+        print(f"\n✗ {exc}\n")
+        return 0
+
     bot = Bot(
         token=config.token,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     updater = Updater()
@@ -128,6 +137,19 @@ async def run() -> int:
         await bot.session.close()
 
 
+def build_session(proxy: str) -> Optional[AiohttpSession]:
+    """Сессия с прокси, если он задан. Без прокси — обычная, как раньше."""
+    if not proxy:
+        return None
+    try:
+        return AiohttpSession(proxy=proxy)
+    except ImportError as exc:  # aiohttp-socks ставится вместе с зависимостями
+        raise RuntimeError(
+            "Для прокси нужен пакет aiohttp-socks.\n"
+            "  Установи зависимости заново: pip install -r requirements.txt"
+        ) from exc
+
+
 async def collect_startup(
     username: str,
     db: Database,
@@ -188,6 +210,11 @@ async def collect_startup(
             "matplotlib на месте" if charts.available() else "нет matplotlib: pip install matplotlib",
         ),
         ("Голос", transcriber.ready, "whisper.cpp на месте" if transcriber.ready else "выключен"),
+        (
+            "Через прокси",
+            bool(config.proxy),
+            config.proxy or "напрямую",
+        ),
         (
             "Автообновление",
             config.auto_update_check and updater.is_git_repo(),

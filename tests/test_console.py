@@ -258,6 +258,7 @@ class StartupTest(unittest.IsolatedAsyncioTestCase):
             owner_id=None,
             auto_update_check=False,
             polling_timeout=15,
+            proxy="",
             voice=VoiceConfig(),
         )
 
