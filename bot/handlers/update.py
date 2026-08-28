@@ -19,7 +19,7 @@ from aiogram.types import CallbackQuery, Message
 from ..db import Database
 from ..formatting import duration, esc, plural
 from ..keyboards import update_actions
-from ..updater import STEP_ORDER, STEP_TITLES, UpdateError, Updater
+from ..updater import STEP_ORDER, STEP_SHORT, STEP_TITLES, UpdateError, Updater
 
 router = Router(name="update")
 logger = logging.getLogger(__name__)
@@ -77,6 +77,7 @@ class ProgressReport:
         self._seen: set[str] = set()
         self._opened = time.monotonic()  # начало всего обновления
         self._started = time.monotonic()  # начало текущего шага
+        self._spent: dict[str, float] = {}  # сколько занял каждый шаг
         self._shown = ""
         self._ticker: Optional[asyncio.Task[None]] = None
 
@@ -85,10 +86,28 @@ class ProgressReport:
         self._ticker = asyncio.create_task(self._tick(), name="update-progress")
 
     async def __call__(self, step: str) -> None:
+        self._close_step()
         self._current = step
         self._seen.add(step)
         self._started = time.monotonic()
         await self._draw()
+
+    def _close_step(self) -> None:
+        if self._current is not None:
+            self._spent[self._current] = time.monotonic() - self._started
+
+    def breakdown(self) -> str:
+        """Время по шагам: «код 12 с · тесты 2 мин 11 с».
+
+        Без разбивки непонятно, на что ушли минуты, и остаётся только гадать —
+        а гадать про собственный компьютер обидно.
+        """
+        parts = [
+            f"{STEP_SHORT[step]} {duration(spent)}"
+            for step, spent in self._spent.items()
+            if spent >= 1 and step in STEP_SHORT
+        ]
+        return " · ".join(parts)
 
     @property
     def total(self) -> float:
@@ -103,7 +122,13 @@ class ProgressReport:
         if self._ticker is not None:
             self._ticker.cancel()
             self._ticker = None
-        await self._sent.edit_text(f"{text}\n<i>Заняло {duration(self.total)}.</i>")
+        self._close_step()
+
+        tail = f"Заняло {duration(self.total)}"
+        details = self.breakdown()
+        if details:
+            tail += f" · {details}"
+        await self._sent.edit_text(f"{text}\n<i>{tail}.</i>")
 
     async def _tick(self) -> None:
         while True:

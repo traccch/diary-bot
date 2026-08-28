@@ -44,6 +44,14 @@ STEP_TITLES: dict[str, str] = {
     RESTART: "Перезапускаюсь",
 }
 
+#: Короткие имена тех же шагов — для строки «код 12 с · тесты 2 мин 11 с».
+STEP_SHORT: dict[str, str] = {
+    PULL: "код",
+    DEPS: "зависимости",
+    TESTS: "тесты",
+    RESTART: "перезапуск",
+}
+
 #: Куда сообщать о ходе дела. None — молча, как раньше.
 Progress = Optional[Callable[[str], Awaitable[None]]]
 

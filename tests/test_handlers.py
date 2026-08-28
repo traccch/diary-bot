@@ -606,6 +606,21 @@ class HandlersTest(BotTestCase):
         await self.click("upd:apply")
         self.assertIn("Заняло", self.bot.edits[-1])
 
+    async def test_breakdown_shows_where_the_time_went(self):
+        """Четыре минуты обновления — надо видеть, на что именно."""
+        from bot.handlers.update import ProgressReport
+
+        report = ProgressReport(make_message("шапка"))
+        report._opened = 0
+        report._started = 0
+        report._spent = {"pull": 12.0, "tests": 131.0, "restart": 0.4}
+
+        details = report.breakdown()
+        self.assertIn("код 12 с", details)
+        self.assertIn("тесты 2 мин 11 с", details)
+        self.assertNotIn("перезапуск", details)  # доли секунды не показываем
+        self.assertNotIn("зависимости", details)  # шага не было вовсе
+
     async def test_messages_sent_during_restart_survive(self):
         """Сообщение, написанное в минуту перезапуска, не должно пропасть."""
         from bot.main import restarting_now
