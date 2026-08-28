@@ -606,6 +606,15 @@ class HandlersTest(BotTestCase):
         await self.click("upd:apply")
         self.assertIn("Заняло", self.bot.edits[-1])
 
+    async def test_messages_sent_during_restart_survive(self):
+        """Сообщение, написанное в минуту перезапуска, не должно пропасть."""
+        from bot.main import restarting_now
+
+        self.assertFalse(await restarting_now(self.db))  # обычный холодный старт
+
+        await self.click("upd:apply")
+        self.assertTrue(await restarting_now(self.db))
+
     async def test_bot_reports_back_after_restart(self):
         """«Перезапускаюсь» без продолжения выглядит как зависший бот."""
         from bot.handlers.update import RESTART_NOTICE

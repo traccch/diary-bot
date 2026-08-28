@@ -60,7 +60,10 @@ def render_progress(current: Optional[str], seen: set[str], elapsed: float) -> s
             # шаг остался позади нетронутым — например, зависимости не менялись
             lines.append(f"⏭ {title} <i>— не понадобилось</i>")
     lines.append("")
-    lines.append("<i>Если тесты не сойдутся, верну прежнюю версию сам.</i>")
+    lines.append(
+        "<i>Если тесты не сойдутся, верну прежнюю версию сам. Писать можно и "
+        "сейчас — отвечу, как только поднимусь.</i>"
+    )
     return "\n".join(lines)
 
 

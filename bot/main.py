@@ -121,7 +121,10 @@ async def run() -> int:
             return 0
 
         await bot.set_my_commands(COMMANDS)
-        await bot.delete_webhook(drop_pending_updates=True)
+        # после обновления сообщения, написанные в минуту перезапуска, надо
+        # обработать: человек ждёт ответа и не знает, что бота в этот миг нет
+        keep = await restarting_now(db)
+        await bot.delete_webhook(drop_pending_updates=not keep)
         startup = await collect_startup(
             me.username, db, config, updater, dispatcher["transcriber"]
         )
@@ -147,6 +150,17 @@ async def run() -> int:
         await scheduler.stop()
         await db.close()
         await bot.session.close()
+
+
+async def restarting_now(db: Database) -> bool:
+    """Мы поднимаемся после обновления, а не запускаемся с нуля?
+
+    Разница в том, что делать с сообщениями, накопившимися пока нас не было.
+    После перезапуска их надо разобрать: их писали минуту назад, живому боту.
+    А после того как ноутбук стоял выключенным неделю, разбирать команды
+    недельной давности незачем — обстановка давно другая.
+    """
+    return bool(await db.get_meta(RESTART_NOTICE))
 
 
 async def announce_restart(bot: Bot, db: Database, version: str) -> None:
