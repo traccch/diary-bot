@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .db import Reminder
 from .prompts import Prompt
-from .sections import SECTIONS
+from .sections import SECTIONS, topic_of
 
 
 def update_actions() -> InlineKeyboardMarkup:
@@ -77,14 +77,21 @@ def health_prompt(prompt: Prompt) -> InlineKeyboardMarkup:
 
 
 def reminder_list(reminders: Sequence[Reminder], skip_if_measured: bool) -> InlineKeyboardMarkup:
+    """Список времён кнопками. У каждой — значок темы: 21:00 и 21:30 иначе
+    неразличимы, а удалять придётся наугад."""
     builder = InlineKeyboardBuilder()
-    for reminder in reminders:
+    for reminder in sorted(reminders, key=lambda item: (item.topic, item.at)):
+        icon = topic_of(reminder.topic).icon
         builder.button(
-            text=f"🗑 {reminder.label}",
+            text=f"{icon} {reminder.label}",
             callback_data=f"remdel:{reminder.topic}:{reminder.label}",
         )
     builder.adjust(3)
-    toggle = "✅ Не дублировать" if skip_if_measured else "☑️ Не дублировать"
+    toggle = (
+        "✅ Молчу, если уже сделано"
+        if skip_if_measured
+        else "🔔 Напоминаю в любом случае"
+    )
     builder.row(InlineKeyboardButton(text=toggle, callback_data="remskip"))
     return builder.as_markup()
 

@@ -725,6 +725,23 @@ class HandlersTest(BotTestCase):
         user = await self.db.ensure_user(USER_ID)
         self.assertEqual(user.tz, "Asia/Krasnoyarsk")
 
+    async def test_reminder_list_explains_itself(self):
+        """«Не дублировать» — по надписи не догадаешься, что она делает."""
+        answer = await self.send("/reminders")
+        self.assertIn("Молчу, если уже сделано", answer)
+        self.assertIn("пробег", answer.lower())
+
+        # у каждой кнопки виден значок темы: 21:00 и 21:30 иначе не различить
+        buttons = self.bot.last_buttons
+        self.assertTrue(any(text.startswith("🩺") for text in buttons))
+        self.assertTrue(any(text.startswith("🚗") for text in buttons))
+        self.assertIn("✅ Молчу, если уже сделано", buttons)
+
+        await self.click("remskip")
+        answer = await self.send("/reminders")
+        self.assertIn("Напоминаю в любом случае", answer)
+        self.assertIn("🔔 Напоминаю в любом случае", self.bot.last_buttons)
+
     async def test_timezone_change_warns_about_the_clock(self):
         """Часы не переезжают вместе с поясом — об этом лучше сказать сразу."""
         answer = await self.send("/tz Asia/Krasnoyarsk")
