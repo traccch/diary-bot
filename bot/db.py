@@ -172,12 +172,15 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
     async def connect(self) -> None:
         directory = os.path.dirname(os.path.abspath(self._path))
         os.makedirs(directory, exist_ok=True)
+        # базы ещё нет — значит, и дополнять в ней нечего: всё создаст схема
+        fresh = self._path == ":memory:" or not os.path.exists(self._path)
         self._conn = await aiosqlite.connect(self._path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(SCHEMA)
-        await self._migrate()
+        if not fresh:
+            await self._migrate()
         await self.sync_money_categories()
         await self._conn.commit()
 

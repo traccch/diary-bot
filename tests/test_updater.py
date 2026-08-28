@@ -455,6 +455,26 @@ class ShardingTest(unittest.TestCase):
         self.assertEqual(self.updater._shards(["tests.test_one"]), [["tests.test_one"]])
 
 
+class PriorityTest(unittest.TestCase):
+    """Обновление не должно мешать работать за компьютером."""
+
+    def test_normal_run_has_no_extras(self):
+        from bot.updater import polite_kwargs
+
+        self.assertEqual(polite_kwargs(False), {})
+
+    def test_low_priority_is_asked_for(self):
+        import os
+
+        from bot.updater import polite_kwargs
+
+        kwargs = polite_kwargs(True)
+        if os.name == "nt":
+            self.assertEqual(kwargs["creationflags"], 0x00004000)
+        else:
+            self.assertIn("preexec_fn", kwargs)
+
+
 class ProgressTest(unittest.TestCase):
     """Строка хода дела: что видно, пока обновление идёт."""
 

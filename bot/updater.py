@@ -103,8 +103,23 @@ class UpdateError(RuntimeError):
     """Обновиться не вышло, причина — в тексте."""
 
 
+def polite_kwargs(low_priority: bool) -> dict:
+    """Как запустить дочерний процесс, чтобы он не мешал работать.
+
+    Обновление — фоновая работа: если из-за неё ноутбук перестаёт слушаться,
+    это хуже, чем лишняя минута ожидания. Поэтому тесты идут с пониженным
+    приоритетом: свободные ядра они займут целиком, а вот у браузера и
+    редактора отбирать их не станут.
+    """
+    if not low_priority:
+        return {}
+    if os.name == "nt":
+        return {"creationflags": 0x00004000}  # BELOW_NORMAL_PRIORITY_CLASS
+    return {"preexec_fn": lambda: os.nice(10)}
+
+
 async def run_command(
-    args: Sequence[str], cwd: Path, timeout: int
+    args: Sequence[str], cwd: Path, timeout: int, low_priority: bool = False
 ) -> tuple[int, str]:
     """Запускает команду и возвращает (код возврата, вывод)."""
     process = await asyncio.create_subprocess_exec(
@@ -112,6 +127,7 @@ async def run_command(
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        **polite_kwargs(low_priority),
         env={
             **os.environ,
             "GIT_TERMINAL_PROMPT": "0",
@@ -357,7 +373,10 @@ class Updater:
         results = await asyncio.gather(
             *(
                 run_command(
-                    [self.python, "-m", "unittest", *shard], self.root, TESTS_TIMEOUT
+                    [self.python, "-m", "unittest", *shard],
+                    self.root,
+                    TESTS_TIMEOUT,
+                    low_priority=True,
                 )
                 for shard in self._shards(modules)
             ),
@@ -378,6 +397,7 @@ class Updater:
             [self.python, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
             self.root,
             TESTS_TIMEOUT,
+            low_priority=True,
         )
         tail = output.strip().splitlines()
         return code == 0, "\n".join(tail[-6:])

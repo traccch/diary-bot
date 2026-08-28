@@ -168,3 +168,70 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MigrationTest(unittest.IsolatedAsyncioTestCase):
+    """Старая база должна дополняться, а не падать с «no such column»."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self._tmp.name) / "old.db")
+
+    async def asyncTearDown(self):
+        self._tmp.cleanup()
+
+    async def make_old_db(self) -> None:
+        """База прошлой версии: в users нет ни валюты, ни раздела, ни пометки."""
+        import aiosqlite
+
+        async with aiosqlite.connect(self.path) as conn:
+            await conn.execute(
+                "CREATE TABLE users ("
+                " user_id INTEGER PRIMARY KEY,"
+                " tz TEXT NOT NULL DEFAULT 'Europe/Moscow',"
+                " target_sys INTEGER NOT NULL DEFAULT 135,"
+                " target_dia INTEGER NOT NULL DEFAULT 85,"
+                " skip_if_measured INTEGER NOT NULL DEFAULT 1,"
+                " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+            )
+            await conn.execute("INSERT INTO users (user_id, tz) VALUES (?, ?)", (777, "Asia/Omsk"))
+            await conn.commit()
+
+    async def test_missing_columns_are_added(self):
+        await self.make_old_db()
+
+        db = Database(self.path, "Europe/Moscow")
+        await db.connect()
+        try:
+            cur = await db.conn.execute("PRAGMA table_info(users)")
+            columns = {row["name"] for row in await cur.fetchall()}
+            self.assertIn("currency", columns)
+            self.assertIn("section", columns)
+            self.assertIn("reminders_seeded", columns)
+
+            # и запись из старой базы на месте, с прежним часовым поясом
+            user = await db.ensure_user(777)
+            self.assertEqual(user.tz, "Asia/Omsk")
+        finally:
+            await db.close()
+
+    async def test_new_tables_appear_too(self):
+        await self.make_old_db()
+
+        db = Database(self.path, "Europe/Moscow")
+        await db.connect()
+        try:
+            # разделы, которых в той версии не было вовсе
+            await db.set_reading(777, dt.date(2026, 8, 28), 203116)
+            self.assertEqual((await db.last_reading(777)).km, 203116)
+        finally:
+            await db.close()
+
+    async def test_fresh_database_needs_no_migration(self):
+        db = Database(self.path, "Europe/Moscow")
+        await db.connect()
+        try:
+            user = await db.ensure_user(777)
+            self.assertEqual(user.currency, "₽")
+        finally:
+            await db.close()
