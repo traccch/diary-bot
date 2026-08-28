@@ -5,10 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 import unittest
-from pathlib import Path
 
-from bot.db import Database
 from bot.reminders import ReminderScheduler, is_due, local_now, next_fire, wait_text
+
+from .support import memory_db
 
 USER_ID = 777
 # 05:00 UTC — это 08:00 в Москве и 10:00 в Алматы
@@ -84,7 +84,7 @@ class NextFireTest(unittest.TestCase):
 class SchedulerTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         await self.db.ensure_user(USER_ID)
         # По умолчанию бот ставит напоминания сам — в этих тестах они бы

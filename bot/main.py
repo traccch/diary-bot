@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Optional
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramNetworkError,
+    TelegramUnauthorizedError,
+)
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
@@ -20,6 +25,8 @@ from . import console
 from .config import Config, load_config
 from .db import Database
 from .handlers import build_router
+from .formatting import duration
+from .handlers.update import RESTART_NOTICE
 from .heartbeat import Heartbeat
 from .journal import Counter, JournalMiddleware
 from .middlewares import UserMiddleware, now_for
@@ -112,17 +119,19 @@ async def run() -> int:
 
         await bot.set_my_commands(COMMANDS)
         await bot.delete_webhook(drop_pending_updates=True)
+        startup = await collect_startup(
+            me.username, db, config, updater, dispatcher["transcriber"]
+        )
 
         scheduler.start()
         heartbeat.start()
         if config.auto_update_check and updater.is_git_repo():
             watcher.start()
 
+        await announce_restart(bot, db, startup.commit)
         print(
             console.banner(
-                await collect_startup(
-                    me.username, db, config, updater, dispatcher["transcriber"]
-                ),
+                startup,
                 palette,
             )
         )
@@ -135,6 +144,36 @@ async def run() -> int:
         await scheduler.stop()
         await db.close()
         await bot.session.close()
+
+
+async def announce_restart(bot: Bot, db: Database, version: str) -> None:
+    """Докладывает в чат, что бот вернулся после обновления.
+
+    «Перезапускаюсь» без продолжения выглядит как зависший бот: человек ждёт
+    ответа, которого не будет, потому что отвечать было уже некому — процесс
+    в этот момент умирал.
+    """
+    notice = await db.get_meta(RESTART_NOTICE)
+    if not notice:
+        return
+    await db.set_meta(RESTART_NOTICE, "")
+
+    chat_id, _, stamp = notice.partition("|")
+    took = ""
+    try:
+        took = duration(time.time() - float(stamp))
+    except ValueError:
+        pass
+
+    text = f"✅ <b>Готово, я снова на связи</b> · {version}" if version else (
+        "✅ <b>Готово, я снова на связи</b>"
+    )
+    if took:
+        text += f"\n<i>Перезапуск занял {took}.</i>"
+    try:
+        await bot.send_message(int(chat_id), text)
+    except (TelegramAPIError, ValueError):
+        logger.debug("Не смог доложить о перезапуске", exc_info=True)
 
 
 def build_session(proxy: str) -> Optional[AiohttpSession]:

@@ -17,7 +17,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..db import Database
-from ..formatting import esc, plural
+from ..formatting import duration, esc, plural
 from ..keyboards import update_actions
 from ..updater import STEP_ORDER, STEP_TITLES, UpdateError, Updater
 
@@ -25,6 +25,9 @@ router = Router(name="update")
 logger = logging.getLogger(__name__)
 
 NOT_OWNER = "Эта команда только для владельца бота."
+
+#: Пометка «после перезапуска доложись вот сюда».
+RESTART_NOTICE = "restart_notice"
 
 #: Шаги обновления в том порядке, в каком их видит человек.
 STEPS: tuple[tuple[str, str], ...] = tuple(
@@ -35,7 +38,7 @@ STEPS: tuple[tuple[str, str], ...] = tuple(
 HEARTBEAT_SECONDS = 15
 
 
-def render_progress(current: Optional[str], seen: set[str], elapsed: int) -> str:
+def render_progress(current: Optional[str], seen: set[str], elapsed: float) -> str:
     """Список шагов: сделанное — галочкой, текущее — с секундомером.
 
     Секундомер здесь не украшение: тесты идут полминуты, зависимости — минуты,
@@ -46,7 +49,7 @@ def render_progress(current: Optional[str], seen: set[str], elapsed: int) -> str
     for step, title in STEPS:
         if step == current:
             reached = True
-            lines.append(f"⏳ {title}… <i>{elapsed} с</i>")
+            lines.append(f"⏳ {title}… <i>{duration(elapsed)}</i>")
         elif reached:
             lines.append(f"◦ {title}")
         elif step in seen:
@@ -69,7 +72,8 @@ class ProgressReport:
         self._heartbeat = heartbeat
         self._current: Optional[str] = None
         self._seen: set[str] = set()
-        self._started = time.monotonic()
+        self._opened = time.monotonic()  # начало всего обновления
+        self._started = time.monotonic()  # начало текущего шага
         self._shown = ""
         self._ticker: Optional[asyncio.Task[None]] = None
 
@@ -83,11 +87,20 @@ class ProgressReport:
         self._started = time.monotonic()
         await self._draw()
 
+    @property
+    def total(self) -> float:
+        return time.monotonic() - self._opened
+
     async def finish(self, text: str) -> None:
+        """Последнее слово: итог и сколько всё заняло.
+
+        Время шага бежало на глазах и пропадало вместе с индикатором — а это
+        как раз то, что хочется знать в следующий раз.
+        """
         if self._ticker is not None:
             self._ticker.cancel()
             self._ticker = None
-        await self._sent.edit_text(text)
+        await self._sent.edit_text(f"{text}\n<i>Заняло {duration(self.total)}.</i>")
 
     async def _tick(self) -> None:
         while True:
@@ -95,7 +108,7 @@ class ProgressReport:
             await self._draw()
 
     async def _draw(self) -> None:
-        elapsed = int(time.monotonic() - self._started)
+        elapsed = time.monotonic() - self._started
         text = render_progress(self._current, self._seen, elapsed)
         if text == self._shown:
             return
@@ -196,4 +209,10 @@ async def cb_apply(
     await report.finish(("✅ " if result.ok else "⚠️ ") + result.message)
     if result.restart:
         await db.set_meta("notified_commit", "")
+        # чтобы после перезапуска бот сам сказал, что вернулся: иначе человек
+        # сидит и ждёт ответа у сообщения «Перезапускаюсь»
+        await db.set_meta(
+            RESTART_NOTICE,
+            f"{callback.message.chat.id}|{time.time():.0f}",
+        )
         restart_event.set()

@@ -10,7 +10,6 @@ import datetime as dt
 import re
 import tempfile
 import unittest
-from pathlib import Path
 from typing import Any
 
 from aiogram import Bot, Dispatcher
@@ -28,11 +27,12 @@ from aiogram.methods import (
 from aiogram.methods.base import TelegramType
 from aiogram.types import CallbackQuery, Chat, Message, Update, User, Voice
 
-from bot.db import Database
 from bot.handlers import build_router
 from bot.middlewares import UserMiddleware
 from bot.updater import UpdateResult, UpdateStatus
 from bot.voice import VoiceConfig, build_transcriber
+
+from .support import memory_db
 
 CHAT_ID = 555
 USER_ID = 777
@@ -165,7 +165,7 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
 
         self.dp = get_dispatcher()
@@ -601,6 +601,29 @@ class HandlersTest(BotTestCase):
         self.assertIn("✅ Забираю новый код", steps)
         self.assertIn("⏳ Прогоняю тесты", steps)
         self.assertIn("⏭ Ставлю зависимости", steps)  # requirements не менялись
+
+    async def test_total_time_stays_in_the_answer(self):
+        await self.click("upd:apply")
+        self.assertIn("Заняло", self.bot.edits[-1])
+
+    async def test_bot_reports_back_after_restart(self):
+        """«Перезапускаюсь» без продолжения выглядит как зависший бот."""
+        from bot.handlers.update import RESTART_NOTICE
+        from bot.main import announce_restart
+
+        await self.click("upd:apply")
+        notice = await self.db.get_meta(RESTART_NOTICE)
+        self.assertTrue(notice)
+
+        before = len(self.bot.texts)
+        await announce_restart(self.bot, self.db, "v1.2")
+        self.assertIn("снова на связи", self.bot.texts[-1])
+        self.assertIn("v1.2", self.bot.texts[-1])
+        self.assertEqual(len(self.bot.texts), before + 1)
+
+        # доложились один раз — второй раз молчим
+        await announce_restart(self.bot, self.db, "v1.2")
+        self.assertEqual(len(self.bot.texts), before + 1)
 
     async def test_progress_message_becomes_the_answer(self):
         """Итог заменяет собой индикатор — лишних сообщений в чате не остаётся."""

@@ -5,10 +5,9 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 import unittest
-from pathlib import Path
 
 from bot.pressure import metrics
-from bot.db import Database, UserSettings
+from bot.db import UserSettings
 from bot.pressure.db import Measurement, Metric
 from bot.pressure.parsing import ParseError, parse_entry
 from bot.pressure.stats import (
@@ -19,6 +18,8 @@ from bot.pressure.stats import (
     render_correlation,
     summarize_metric,
 )
+
+from .support import memory_db
 
 NOW = dt.datetime(2026, 8, 17, 8, 30)
 TODAY = NOW.date()
@@ -194,7 +195,7 @@ class CorrelationTest(unittest.TestCase):
 class MetricStorageTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         await self.db.ensure_user(USER.user_id)
 

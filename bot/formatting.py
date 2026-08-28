@@ -37,6 +37,22 @@ def plural(number: int, one: str, few: str, many: str) -> str:
     return many
 
 
+def duration(seconds: float) -> str:
+    """Длительность по-человечески: 34 с, 5 мин 53 с, 1 ч 12 мин.
+
+    Секунды перестают читаться где-то после минуты: «353 с» приходится
+    делить в уме, а «5 мин 53 с» понятно сразу.
+    """
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total} с"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes} мин {secs:02d} с" if secs else f"{minutes} мин"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} ч {minutes:02d} мин" if minutes else f"{hours} ч"
+
+
 def days_word(count: int) -> str:
     return plural(count, "день", "дня", "дней")
 

@@ -11,7 +11,11 @@ from pathlib import Path
 from aiogram.types import Chat, Message, User, Voice
 
 from bot import console, journal
-from bot.console import Palette, Startup, banner, box, cell_width, human_size, visible
+from bot.console import Palette, Startup, banner, cell_width, human_size, visible
+
+from bot.db import Database
+
+from .support import memory_db
 
 NOW = dt.datetime(2026, 8, 27, 23, 15)
 
@@ -184,10 +188,8 @@ class HeartbeatTest(unittest.IsolatedAsyncioTestCase):
     """Часовая отметка: в тихом окне должно быть видно, что бот жив."""
 
     async def asyncSetUp(self):
-        from bot.db import Database
-
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "diary.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
 
     async def asyncTearDown(self):
@@ -233,8 +235,6 @@ class StartupTest(unittest.IsolatedAsyncioTestCase):
     """Шапка собирается из живой базы и не падает, когда чего-то нет."""
 
     async def asyncSetUp(self):
-        from bot.db import Database
-
         self._tmp = tempfile.TemporaryDirectory()
         self.path = str(Path(self._tmp.name) / "diary.db")
         self.db = Database(self.path, "Europe/Moscow")

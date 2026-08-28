@@ -5,9 +5,8 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 import unittest
-from pathlib import Path
 
-from bot.db import Database, UserSettings
+from bot.db import UserSettings
 from bot.pressure.db import Measurement
 from bot.pressure.stats import (
     build_report,
@@ -17,6 +16,8 @@ from bot.pressure.stats import (
     summarize,
     trend_line,
 )
+
+from .support import memory_db
 
 NOW = dt.datetime(2026, 8, 17, 14, 30)
 USER = UserSettings(user_id=777, tz="Europe/Moscow", target_sys=135, target_dia=85)
@@ -167,7 +168,7 @@ class RenderTest(unittest.TestCase):
 class BuildReportTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         await self.db.ensure_user(USER.user_id)
 

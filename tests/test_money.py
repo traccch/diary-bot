@@ -5,12 +5,13 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 import unittest
-from pathlib import Path
 
-from bot.db import Database, UserSettings
+from bot.db import UserSettings
 from bot.money.db import EXPENSE, INCOME, TOTAL_LIMIT_CATEGORY
 from bot.money.parsing import ParseError, match_category, parse_amount, parse_transaction
 from bot.money.stats import balance_text, build_report, check_limits, period_range
+
+from .support import memory_db
 
 TODAY = dt.date(2026, 8, 17)
 USER = UserSettings(user_id=777, tz="Europe/Moscow", currency="₽")
@@ -72,7 +73,7 @@ class ParseTest(unittest.TestCase):
 class MoneyStorageTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "t.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         self.user = await self.db.ensure_user(USER.user_id)
 
@@ -215,7 +216,7 @@ class TransferCategoriesTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "t.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         self.user = await self.db.ensure_user(USER.user_id)
 

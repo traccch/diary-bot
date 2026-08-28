@@ -355,6 +355,45 @@ class WordingTest(unittest.TestCase):
         self.assertIn("11 коммитов", self.status(11))
 
 
+class DurationTest(unittest.TestCase):
+    """Секунды перестают читаться после минуты."""
+
+    def test_wording(self):
+        from bot.formatting import duration
+
+        self.assertEqual(duration(34), "34 с")
+        self.assertEqual(duration(60), "1 мин")
+        self.assertEqual(duration(353), "5 мин 53 с")
+        self.assertEqual(duration(3600), "1 ч")
+        self.assertEqual(duration(4520), "1 ч 15 мин")
+
+
+class ShardingTest(unittest.TestCase):
+    """Тесты раздаются процессам: на старой машине полный прогон идёт минутами."""
+
+    def setUp(self):
+        from bot.updater import Updater
+
+        self.updater = Updater()
+
+    def test_every_module_runs_exactly_once(self):
+        modules = self.updater.test_modules()
+        self.assertIn("tests.test_updater", modules)
+
+        spread = [module for shard in self.updater._shards(modules) for module in shard]
+        self.assertEqual(sorted(spread), sorted(modules))
+
+    def test_heaviest_module_is_not_piled_up(self):
+        shards = self.updater._shards(self.updater.test_modules())
+        heaviest = max(self.updater.test_modules(), key=self.updater._weight)
+        own = next(shard for shard in shards if heaviest in shard)
+        # самый большой модуль не должен тащить за собой длинный хвост
+        self.assertLessEqual(len(own), min(len(shard) for shard in shards) + 1)
+
+    def test_single_module_needs_no_sharding(self):
+        self.assertEqual(self.updater._shards(["tests.test_one"]), [["tests.test_one"]])
+
+
 class ProgressTest(unittest.TestCase):
     """Строка хода дела: что видно, пока обновление идёт."""
 
@@ -373,6 +412,9 @@ class ProgressTest(unittest.TestCase):
         self.assertIn("✅ Забираю новый код", text)
         self.assertIn("⏳ Прогоняю тесты… <i>34 с</i>", text)
         self.assertIn("◦ Перезапускаюсь", text)
+
+    def test_long_steps_are_counted_in_minutes(self):
+        self.assertIn("5 мин 53 с", self.render("tests", ("pull", "tests"), 353))
 
     def test_untouched_step_is_marked_as_skipped(self):
         text = self.render("tests", ("pull", "tests"))

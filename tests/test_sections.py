@@ -5,14 +5,14 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 import unittest
-from pathlib import Path
 
 from bot import sections
-from bot.db import Database
 from bot.money.handlers.entry import NOT_FOUND as MONEY_NOT_FOUND
 from bot.money.handlers.entry import save_transaction
 from bot.pressure.parsing import looks_like_pressure
 from bot.voice import VoiceConfig, build_transcriber, clean_speech
+
+from .support import memory_db
 
 TODAY = dt.date(2026, 8, 17)
 
@@ -60,7 +60,7 @@ class CrossSectionTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "t.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         self.user = await self.db.ensure_user(777)
 

@@ -47,6 +47,9 @@ STEP_TITLES: dict[str, str] = {
 #: Куда сообщать о ходе дела. None — молча, как раньше.
 Progress = Optional[Callable[[str], Awaitable[None]]]
 
+#: Больше процессов не помогает: тесты упираются в запуск самого питона.
+MAX_TEST_WORKERS = 4
+
 GIT_TIMEOUT = 120
 PIP_TIMEOUT = 900  # matplotlib и numpy ставятся долго
 TESTS_TIMEOUT = 600
@@ -259,7 +262,69 @@ class Updater:
         if code != 0:
             raise UpdateError(f"Не удалось поставить зависимости:\n{output[-500:]}")
 
+    def test_modules(self) -> list[str]:
+        """Файлы тестов как имена модулей — их можно раздать разным процессам."""
+        folder = self.root / "tests"
+        return sorted(
+            f"tests.{path.stem}" for path in folder.glob("test_*.py") if path.is_file()
+        )
+
+    def _weight(self, module: str) -> int:
+        """Грубая оценка длительности — размер файла. Точнее мерить незачем:
+        нужно лишь не свалить самый большой модуль в одну кучу с остальными."""
+        path = self.root / (module.replace(".", "/") + ".py")
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+
+    def _shards(self, modules: Sequence[str]) -> list[list[str]]:
+        """Делит тесты между процессами: по ядру на процесс, но не больше
+        четырёх — дальше выигрыш съедается запуском самого питона.
+
+        Раскладываем от большего к меньшему в самую свободную стопку: иначе
+        один длинный модуль достаётся процессу, который и так загружен, и
+        остальные ждут его в конце.
+        """
+        workers = max(1, min(os.cpu_count() or 1, MAX_TEST_WORKERS, len(modules)))
+        if workers == 1:
+            return [list(modules)]
+
+        groups: list[list[str]] = [[] for _ in range(workers)]
+        loads = [0] * workers
+        for module in sorted(modules, key=self._weight, reverse=True):
+            lightest = loads.index(min(loads))
+            groups[lightest].append(module)
+            loads[lightest] += self._weight(module)
+        return [group for group in groups if group]
+
     async def _run_tests(self) -> tuple[bool, str]:
+        """Прогон тестов. На старой машине полный набор идёт минутами,
+        поэтому модули раздаются нескольким процессам разом."""
+        modules = self.test_modules()
+        if not modules:
+            return await self._run_tests_in_one_go()
+
+        results = await asyncio.gather(
+            *(
+                run_command(
+                    [self.python, "-m", "unittest", *shard], self.root, TESTS_TIMEOUT
+                )
+                for shard in self._shards(modules)
+            ),
+            return_exceptions=True,
+        )
+
+        failures: list[str] = []
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+            code, output = result
+            if code != 0:
+                failures.extend(output.strip().splitlines()[-6:])
+        return not failures, "\n".join(failures[-8:])
+
+    async def _run_tests_in_one_go(self) -> tuple[bool, str]:
         code, output = await run_command(
             [self.python, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
             self.root,

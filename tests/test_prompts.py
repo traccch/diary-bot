@@ -5,11 +5,12 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 import unittest
-from pathlib import Path
 
 from bot import prompts, sections
-from bot.db import DEFAULT_REMINDERS, Database
+from bot.db import DEFAULT_REMINDERS
 from bot.reminders import ReminderScheduler
+
+from .support import memory_db
 
 from .test_handlers import BotTestCase
 
@@ -85,7 +86,7 @@ class RecordingBot:
 class SchedulerHealthTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         await self.db.ensure_user(USER_ID)
         await self.db.delete_all_reminders(USER_ID)

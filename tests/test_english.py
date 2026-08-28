@@ -15,6 +15,8 @@ from bot.english.db import streak
 from bot.english.handlers.progress import level_of
 from bot.english.lookup import find, looks_english
 
+from .support import memory_db
+
 USER_ID = 777
 TODAY = dt.date(2026, 8, 27)
 
@@ -158,7 +160,7 @@ class LevelTest(unittest.TestCase):
 class ProgressStorageTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db = Database(str(Path(self._tmp.name) / "test.db"), "Europe/Moscow")
+        self.db = memory_db()
         await self.db.connect()
         await self.db.ensure_user(USER_ID)
 
