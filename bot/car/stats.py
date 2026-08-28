@@ -82,6 +82,10 @@ async def build_report(db, user, today: dt.date) -> str:
         lines.append("")
         lines.append(cost)
 
+    from .service import full_line
+
+    lines.append(full_line(await db.get_service(user.user_id), last.km))
+
     if last.on_date != today:
         lines.append("")
         lines.append("<i>Сегодняшнего показания нет — пришли число с одометра.</i>")

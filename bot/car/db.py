@@ -21,6 +21,14 @@ CREATE TABLE IF NOT EXISTS car_readings (
     km      INTEGER NOT NULL,
     PRIMARY KEY (user_id, on_date)
 );
+
+CREATE TABLE IF NOT EXISTS car_service (
+    user_id     INTEGER PRIMARY KEY,
+    due_km      INTEGER NOT NULL,
+    interval_km INTEGER NOT NULL DEFAULT 0,
+    done_km     INTEGER,
+    set_on      TEXT NOT NULL DEFAULT (date('now'))
+);
 """
 
 #: Больше — это уже не одометр, а опечатка.
@@ -31,6 +39,19 @@ MAX_KM = 3_000_000
 class Reading:
     on_date: dt.date
     km: int
+
+
+@dataclass(frozen=True)
+class Service:
+    """Ближайшее ТО: на каком пробеге и через сколько повторять."""
+
+    due_km: int
+    interval_km: int = 0
+    done_km: Optional[int] = None
+
+    def left(self, km: int) -> int:
+        """Сколько осталось. Отрицательное — просрочено."""
+        return self.due_km - km
 
 
 def _row(row: aiosqlite.Row) -> Reading:
@@ -96,6 +117,41 @@ class CarRepo:
         )
         row = await cur.fetchone()
         return row["cnt"] if row else 0
+
+    # ------------------------------------------------------------------- ТО
+
+    async def set_service(
+        self, user_id: int, due_km: int, interval_km: int = 0
+    ) -> Service:
+        await self.conn.execute(
+            "INSERT INTO car_service (user_id, due_km, interval_km) VALUES (?, ?, ?)"
+            " ON CONFLICT(user_id) DO UPDATE SET due_km = excluded.due_km,"
+            " interval_km = excluded.interval_km, set_on = date('now')",
+            (user_id, int(due_km), int(interval_km)),
+        )
+        await self.conn.commit()
+        return Service(int(due_km), int(interval_km))
+
+    async def get_service(self, user_id: int) -> Optional[Service]:
+        cur = await self.conn.execute(
+            "SELECT due_km, interval_km, done_km FROM car_service WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return Service(row["due_km"], row["interval_km"], row["done_km"])
+
+    async def complete_service(self, user_id: int, km: int) -> None:
+        """Отмечает, что ТО сделано на этом пробеге."""
+        await self.conn.execute(
+            "UPDATE car_service SET done_km = ? WHERE user_id = ?", (int(km), user_id)
+        )
+        await self.conn.commit()
+
+    async def clear_service(self, user_id: int) -> None:
+        await self.conn.execute("DELETE FROM car_service WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
 
     async def delete_reading(self, user_id: int, on_date: dt.date) -> bool:
         cur = await self.conn.execute(

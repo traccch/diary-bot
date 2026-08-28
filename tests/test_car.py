@@ -107,9 +107,13 @@ class StorageTest(unittest.IsolatedAsyncioTestCase):
 
 
 class CarFlowTest(BotTestCase):
+    def said(self) -> str:
+        """Всё сказанное за ход: за записью пробега может идти вопрос про ТО."""
+        return "\n".join(self.bot.texts)
+
     async def test_free_text_records_mileage(self):
-        answer = await self.send("пробег 203116")
-        self.assertIn("203 116", answer)
+        await self.send("пробег 203116")
+        self.assertIn("203 116", self.said())
         self.assertEqual((await self.db.last_reading(USER_ID)).km, 203116)
 
     async def test_fuel_line_is_both_expense_and_reading(self):
@@ -126,16 +130,17 @@ class CarFlowTest(BotTestCase):
         today = now_for("Europe/Moscow").date()
         await self.db.set_reading(USER_ID, today - dt.timedelta(days=1), 203000)
 
-        answer = await self.send("пробег 203100")
-        self.assertIn("Проехал со вчера", answer)
-        self.assertIn("100 км", answer)
+        await self.send("пробег 203100")
+        self.assertIn("Проехал со вчера", self.said())
+        self.assertIn("100 км", self.said())
 
     async def test_lower_reading_is_questioned(self):
         from bot.middlewares import now_for
 
         today = now_for("Europe/Moscow").date()
         await self.db.set_reading(USER_ID, today - dt.timedelta(days=1), 203000)
-        self.assertIn("больше", await self.send("пробег 202000"))
+        await self.send("пробег 202000")
+        self.assertIn("больше", self.said())
 
     async def test_did_not_drive_button(self):
         from bot.middlewares import now_for
@@ -160,6 +165,118 @@ class CarFlowTest(BotTestCase):
         await self.db.ensure_user(USER_ID)  # напоминания ставятся при знакомстве
         topics = {item.topic for item in await self.db.list_reminders(USER_ID)}
         self.assertIn(sections.CAR, topics)
+
+
+class ServiceTest(unittest.TestCase):
+    """Правила молчания: про ТО слышно, только когда оно близко."""
+
+    def line(self, due, km, interval=10000):
+        from bot.car.db import Service
+        from bot.car.service import line
+
+        return line(Service(due, interval), km)
+
+    def test_far_away_is_silent(self):
+        self.assertEqual(self.line(213000, 203000), "")
+
+    def test_close_is_announced(self):
+        self.assertIn("осталось", self.line(204000, 203600))
+
+    def test_overdue_says_by_how_much(self):
+        text = self.line(203000, 203600)
+        self.assertIn("просрочено", text)
+        self.assertIn("600", text)
+
+    def test_no_plan_is_silent(self):
+        from bot.car.service import line
+
+        self.assertEqual(line(None, 203000), "")
+
+    def test_buttons_are_round_numbers(self):
+        from bot.car.service import targets
+
+        self.assertEqual(targets(203116), [(5000, 208000), (10000, 213000), (15000, 218000)])
+
+    def test_next_after_done_needs_an_interval(self):
+        from bot.car.db import Service
+        from bot.car.service import next_after_done
+
+        self.assertEqual(next_after_done(Service(203000, 10000), 203100), 213100)
+        self.assertIsNone(next_after_done(Service(203000, 0), 203100))
+
+
+class ServiceFlowTest(BotTestCase):
+    def said(self) -> str:
+        return "\n".join(self.bot.texts)
+
+    async def test_asks_once_and_then_keeps_quiet(self):
+        """Вопрос про ТО не должен приходить каждое утро."""
+        await self.send("пробег 203116")
+        self.assertIn("Когда ближайшее ТО", self.said())
+        self.assertTrue(any("через 10 000" in b for b in self.bot.last_buttons))
+
+        self.bot.calls.clear()
+        await self.send("пробег 203200")
+        self.assertNotIn("Когда ближайшее ТО", self.said())
+
+    async def test_setting_by_button(self):
+        await self.send("пробег 203116")
+        await self.click("car:to:213000")
+
+        plan = await self.db.get_service(USER_ID)
+        self.assertEqual(plan.due_km, 213000)
+        self.assertEqual(plan.interval_km, 9884)
+        self.assertIn("До тех пор молчу", self.bot.edits[-1])
+
+    async def test_setting_by_number(self):
+        await self.send("пробег 203116")
+        await self.click("car:to:ask")
+        await self.send("210000")
+
+        self.assertEqual((await self.db.get_service(USER_ID)).due_km, 210000)
+
+    async def test_number_must_be_ahead(self):
+        await self.send("пробег 203116")
+        await self.click("car:to:ask")
+        await self.send("200000")
+
+        self.assertIn("меньше текущего", self.said())
+        self.assertIsNone(await self.db.get_service(USER_ID))
+
+    async def test_never_mutes_the_question(self):
+        await self.send("пробег 203116")
+        await self.click("car:to:never")
+
+        self.bot.calls.clear()
+        await self.send("пробег 203200")
+        self.assertNotIn("Когда ближайшее ТО", self.said())
+
+    async def test_warns_only_when_close(self):
+        await self.db.set_service(USER_ID, 213000, 10000)
+
+        await self.send("пробег 203116")
+        self.assertNotIn("До ТО осталось", self.said())
+
+        self.bot.calls.clear()
+        await self.send("пробег 212500")
+        self.assertIn("До ТО осталось", self.said())
+        self.assertIn("500 км", self.said())
+        self.assertTrue(any("ТО сделано" in b for b in self.bot.last_buttons))
+
+    async def test_done_sets_the_next_one(self):
+        await self.db.set_service(USER_ID, 204000, 10000)
+        await self.send("пробег 204100")
+        await self.click("car:to:done")
+
+        plan = await self.db.get_service(USER_ID)
+        self.assertEqual(plan.due_km, 214100)
+        self.assertIn("Следующее", self.said())
+
+    async def test_report_shows_the_plan(self):
+        await self.db.set_service(USER_ID, 213000, 10000)
+        await self.send("пробег 203000")
+
+        self.assertIn("ТО на 213 000 км", await self.send("/car"))
 
 
 if __name__ == "__main__":
