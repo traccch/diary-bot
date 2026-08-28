@@ -50,6 +50,9 @@ Progress = Optional[Callable[[str], Awaitable[None]]]
 #: Больше процессов не помогает: тесты упираются в запуск самого питона.
 MAX_TEST_WORKERS = 4
 
+_CLASS_LINE = re.compile(r"^class (\w+)\(")
+_TEST_LINE = re.compile(r"^    (?:async )?def test_")
+
 GIT_TIMEOUT = 120
 PIP_TIMEOUT = 900  # matplotlib и numpy ставятся долго
 TESTS_TIMEOUT = 600
@@ -263,20 +266,58 @@ class Updater:
             raise UpdateError(f"Не удалось поставить зависимости:\n{output[-500:]}")
 
     def test_modules(self) -> list[str]:
-        """Файлы тестов как имена модулей — их можно раздать разным процессам."""
-        folder = self.root / "tests"
-        return sorted(
-            f"tests.{path.stem}" for path in folder.glob("test_*.py") if path.is_file()
-        )
+        """Что запускать, по кускам. Кусок — тест-класс, а не файл целиком.
 
-    def _weight(self, module: str) -> int:
-        """Грубая оценка длительности — размер файла. Точнее мерить незачем:
-        нужно лишь не свалить самый большой модуль в одну кучу с остальными."""
-        path = self.root / (module.replace(".", "/") + ".py")
+        Файлы очень разные: в самом большом полсотни тестов, и пока он идёт,
+        остальные процессы стоят без дела. Классы дробятся мельче, и прогон
+        упирается уже не в один файл, а в общее число тестов.
+        """
+        units: list[str] = []
+        for path in sorted((self.root / "tests").glob("test_*.py")):
+            module = f"tests.{path.stem}"
+            classes = self._classes(path)
+            units.extend(f"{module}.{name}" for name in classes)
+            if not classes:
+                units.append(module)  # ни одного класса не нашли — берём файлом
+        return units
+
+    @staticmethod
+    def _classes(path: Path) -> dict[str, int]:
+        """Классы с тестами и сколько тестов в каждом — без импорта файла."""
+        found: dict[str, int] = {}
+        current = ""
+        inside_string = False
         try:
-            return path.stat().st_size
+            lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
-            return 0
+            return {}
+        for line in lines:
+            # в тестах обновлятеля лежат целые файлы тестов строками — их
+            # классы к делу не относятся
+            if line.count('"""') % 2:
+                inside_string = not inside_string
+                continue
+            if inside_string:
+                continue
+            match = _CLASS_LINE.match(line)
+            if match:
+                current = match.group(1)
+                found.setdefault(current, 0)
+            elif current and _TEST_LINE.match(line):
+                found[current] += 1
+        # классы-заготовки без собственных тестов запускать нечего
+        return {name: count for name, count in found.items() if count}
+
+    def _weight(self, unit: str) -> int:
+        """Сколько тестов в куске — по ним и раскладываем."""
+        module, _, klass = unit.rpartition(".")
+        if not klass or not module.startswith("tests"):
+            return 1
+        path = self.root / (module.replace(".", "/") + ".py")
+        if not path.exists():  # это модуль целиком, а не класс
+            path = self.root / (unit.replace(".", "/") + ".py")
+            return sum(self._classes(path).values()) or 1
+        return self._classes(path).get(klass, 1)
 
     def _shards(self, modules: Sequence[str]) -> list[list[str]]:
         """Делит тесты между процессами: по ядру на процесс, но не больше
@@ -300,7 +341,7 @@ class Updater:
 
     async def _run_tests(self) -> tuple[bool, str]:
         """Прогон тестов. На старой машине полный набор идёт минутами,
-        поэтому модули раздаются нескольким процессам разом."""
+        поэтому куски раздаются нескольким процессам разом."""
         modules = self.test_modules()
         if not modules:
             return await self._run_tests_in_one_go()

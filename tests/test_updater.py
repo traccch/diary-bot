@@ -431,19 +431,25 @@ class ShardingTest(unittest.TestCase):
 
         self.updater = Updater()
 
-    def test_every_module_runs_exactly_once(self):
-        modules = self.updater.test_modules()
-        self.assertIn("tests.test_updater", modules)
+    def test_every_unit_runs_exactly_once(self):
+        units = self.updater.test_modules()
+        self.assertIn("tests.test_updater.ShardingTest", units)
 
-        spread = [module for shard in self.updater._shards(modules) for module in shard]
-        self.assertEqual(sorted(spread), sorted(modules))
+        spread = [unit for shard in self.updater._shards(units) for unit in shard]
+        self.assertEqual(sorted(spread), sorted(units))
 
-    def test_heaviest_module_is_not_piled_up(self):
-        shards = self.updater._shards(self.updater.test_modules())
-        heaviest = max(self.updater.test_modules(), key=self.updater._weight)
-        own = next(shard for shard in shards if heaviest in shard)
-        # самый большой модуль не должен тащить за собой длинный хвост
-        self.assertLessEqual(len(own), min(len(shard) for shard in shards) + 1)
+    def test_classes_in_string_literals_are_not_tests(self):
+        """В тестах обновлятеля лежат файлы тестов строками — не наши классы."""
+        self.assertNotIn("tests.test_updater.Ok", self.updater.test_modules())
+
+    def test_load_is_split_evenly(self):
+        units = self.updater.test_modules()
+        loads = [
+            sum(self.updater._weight(unit) for unit in shard)
+            for shard in self.updater._shards(units)
+        ]
+        # раньше прогон упирался в один самый большой файл
+        self.assertLess(max(loads) - min(loads), max(loads) * 0.25)
 
     def test_single_module_needs_no_sharding(self):
         self.assertEqual(self.updater._shards(["tests.test_one"]), [["tests.test_one"]])
