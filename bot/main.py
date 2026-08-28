@@ -64,7 +64,7 @@ COMMANDS = [
 async def run() -> int:
     """Запускает бота. Возвращает код возврата: RESTART_CODE — «подними заново»."""
     config = load_config()
-    palette = console.setup(config.log_level)
+    palette = console.setup(config.log_level, config.log_path)
     install_netlog()
 
     db = Database(config.db_path, config.default_tz)
@@ -90,6 +90,7 @@ async def run() -> int:
     dispatcher["owner_id"] = config.owner_id
     dispatcher["restart_event"] = restart_event
     dispatcher["transcriber"] = build_transcriber(config.voice)
+    dispatcher["config_log_path"] = config.log_path
 
     counter = Counter()
     journal = JournalMiddleware(counter)

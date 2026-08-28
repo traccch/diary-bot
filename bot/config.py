@@ -35,6 +35,8 @@ class Config:
     polling_timeout: int
     #: Через какой прокси ходить к Telegram. Пусто — напрямую.
     proxy: str
+    #: Куда писать журнал файлом.
+    log_path: str
     voice: VoiceConfig
 
 
@@ -147,6 +149,12 @@ def load_config() -> Config:
         auto_update_minutes=read_minutes(os.getenv("AUTO_UPDATE_MINUTES", "")),
         polling_timeout=polling_timeout,
         proxy=read_proxy(os.getenv("TELEGRAM_PROXY", "")),
+        log_path=os.getenv("LOG_FILE", "").strip()
+        or os.path.join(
+            os.path.dirname(os.getenv("DB_PATH", "data/diary.db").strip() or "data/diary.db")
+            or "data",
+            "bot.log",
+        ),
         voice=VoiceConfig(
             binary=os.getenv("VOICE_BINARY", "").strip(),
             model=os.getenv("VOICE_MODEL", "").strip(),

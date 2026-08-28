@@ -102,6 +102,51 @@ class ProgressLoadTest(unittest.TestCase):
         self.assertIn("<i>34 с</i>", render_progress("tests", {"tests"}, 34))
 
 
+class DiskWarningTest(unittest.TestCase):
+    """Кончившееся место страшнее обрывов: база просто перестанет писаться."""
+
+    def warning(self, free_mb):
+        from bot.handlers import status
+
+        with mock.patch.object(sysinfo, "disk_free_mb", lambda path=".": free_mb):
+            return status.disk_warning()
+
+    def test_plenty_of_space_is_silent(self):
+        self.assertEqual(self.warning(50 * 1024), "")
+
+    def test_little_space_is_reported(self):
+        text = self.warning(2 * 1024)
+        self.assertIn("мало места", text)
+        self.assertIn("2,0 ГБ", text)
+
+    def test_unknown_is_silent(self):
+        self.assertEqual(self.warning(None), "")
+
+
+class LogFileTest(BotTestCase):
+    """Журнал файлом: пересказывать лог по памяти человек не должен."""
+
+    async def test_log_is_sent_as_a_document(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bot.log"
+            path.write_text("14:13 · Михаил → /reminders\n" * 50, encoding="utf-8")
+            self.dp["config_log_path"] = str(path)
+            await self.send_raw("/log")
+
+        documents = self.bot.documents()
+        self.assertTrue(documents)
+        self.assertIn("Журнал бота", documents[-1].caption)
+        self.assertTrue(documents[-1].document.filename.endswith(".log"))
+
+    async def test_missing_log_is_explained(self):
+        self.dp["config_log_path"] = "/nowhere/bot.log"
+        await self.send_raw("/log")
+        self.assertIn("не ведётся", self.bot.texts[-1])
+
+
 class StatusInChatTest(BotTestCase):
     """То же, что видно в консоли, но с телефона."""
 

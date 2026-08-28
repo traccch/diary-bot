@@ -97,6 +97,31 @@ class FilterTest(unittest.TestCase):
         self.assertTrue(self.filter.filter(item))
         self.assertIn("Telegram отвечал ошибкой ещё 5 раз", item.getMessage())
 
+    def test_endless_drops_are_reported_ever_less_often(self):
+        """Череда одинаковых предупреждений сама становится шумом."""
+        self.filter.filter(record(FAILED))  # первое — сразу
+
+        said = []
+        for minute in range(1, 120):
+            self.clock.value = minute * 60
+            if self.filter.filter(record(FAILED)):
+                said.append(minute)
+
+        # 5 минут, потом 15, потом 45 — а не каждые пять
+        self.assertEqual(said[:3], [5, 20, 65])
+
+    def test_backoff_resets_when_the_cause_changes(self):
+        self.filter.filter(record(FAILED))
+        self.clock.value = 300
+        self.filter.filter(record(FAILED))
+
+        server = record("Failed to fetch updates - TelegramServerError: Bad Gateway")
+        self.clock.value = 400
+        self.assertTrue(self.filter.filter(server))
+
+        self.clock.value = 700  # снова пять минут, отсчёт начался заново
+        self.assertTrue(self.filter.filter(record("Failed to fetch updates - TelegramServerError: Bad Gateway")))
+
     def test_traceback_is_dropped_from_the_rewritten_line(self):
         item = record(FAILED)
         item.exc_info = (ValueError, ValueError("boom"), None)

@@ -101,6 +101,7 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
             ("🌍 Часовой пояс", "do:set:tz"),
             ("⬇️ Обновить бота", "do:set:update"),
             ("🖥 Состояние", "do:set:status"),
+            ("📄 Журнал", "do:set:log"),
             ("📖 Все команды", "do:set:help"),
             ("ℹ️ О шкале и границах", "do:set:about"),
         ),
@@ -329,6 +330,7 @@ async def cb_settings(
     updater: Updater,
     owner_id: Optional[int] = None,
     heartbeat=None,
+    config_log_path: str = "",
 ) -> None:
     from ..keyboards import reminder_list
     from . import common
@@ -367,6 +369,10 @@ async def cb_settings(
         from .status import build_status
 
         await message.answer(await build_status(db, user, now, updater, heartbeat))
+    elif action == "log":
+        from .status import cmd_log
+
+        await cmd_log(message, config_log_path)
     elif action == "help":
         await message.answer(common.HELP)
     elif action == "about":

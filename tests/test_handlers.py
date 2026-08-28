@@ -223,6 +223,14 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
             self.bot, Update(update_id=self._update_id, message=message)
         )
 
+    async def send_raw(self, text: str) -> None:
+        """Отправить сообщение, не ожидая текстового ответа: бот может
+        ответить файлом."""
+        self._update_id += 1
+        await self.dp.feed_update(
+            self.bot, Update(update_id=self._update_id, message=make_message(text))
+        )
+
     async def send_document(self, content: bytes, name: str = "operations.json") -> None:
         from aiogram.types import Document
 

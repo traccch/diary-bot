@@ -261,6 +261,7 @@ class StartupTest(unittest.IsolatedAsyncioTestCase):
             auto_update_minutes=5,
             polling_timeout=15,
             proxy="",
+            log_path="",
             voice=VoiceConfig(),
         )
 

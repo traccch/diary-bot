@@ -222,6 +222,18 @@ def banner(info: Startup, palette: Optional[Palette] = None) -> str:
     return "\n" + box(info.username, rows, palette) + "\n" + hint + "\n"
 
 
+def file_handler(path: str) -> logging.Handler:
+    """Тот же лог, но в файл и без цвета — его потом читают глазами."""
+    import logging.handlers
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        path, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
+    )
+    handler.setFormatter(PrettyFormatter(Palette(False)))
+    return handler
+
+
 #: Как выглядит уровень важности в строке лога.
 LEVEL_MARKS: dict[int, tuple[str, tuple[str, ...]]] = {
     logging.DEBUG: ("·", ("grey",)),
@@ -267,8 +279,18 @@ class PrettyFormatter(logging.Formatter):
         return line
 
 
-def setup(level: str = "INFO") -> Palette:
-    """Ставит форматтер на корневой логгер и приглушает служебный шум aiogram."""
+#: Файл журнала: два куска по мегабайту — этого хватает на сутки-двое.
+LOG_BYTES = 1024 * 1024
+LOG_BACKUPS = 2
+
+
+def setup(level: str = "INFO", log_path: str = "") -> Palette:
+    """Ставит форматтер на корневой логгер и приглушает служебный шум aiogram.
+
+    Кроме окна, лог пишется в файл: пересказывать его по памяти или копировать
+    из консоли — работа, которую человек делать не должен, а по файлу видно
+    всё как было.
+    """
     enable_windows_ansi()
     palette = Palette(supports_color())
 
@@ -278,6 +300,8 @@ def setup(level: str = "INFO") -> Palette:
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
+    if log_path:
+        root.addHandler(file_handler(log_path))
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
     # «Update id=… is handled. Duration 2546 ms» — то же самое, но по-человечески

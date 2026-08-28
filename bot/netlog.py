@@ -72,12 +72,18 @@ HINT = HINTS[NETWORK]
 class FlakyNetworkFilter(logging.Filter):
     """Оставляет от череды обрывов одну строку раз в `quiet_seconds`."""
 
+    #: Во сколько раз растёт пауза, если рвётся снова и снова.
+    BACKOFF = 3
+    #: Дальше часа отступать некуда: раз в час сказать всё-таки стоит.
+    MAX_QUIET = 3600.0
+
     def __init__(
         self,
         quiet_seconds: float = 300.0,
         clock: Optional[Callable[[], float]] = None,
     ) -> None:
         super().__init__()
+        self._base_quiet = quiet_seconds
         self._quiet = quiet_seconds
         self._clock = clock or time.monotonic
         self._last_report: Optional[float] = None
@@ -116,6 +122,14 @@ class FlakyNetworkFilter(logging.Filter):
         changed = cause != self._cause
         if first_time or changed or now - self._last_report >= self._quiet:
             self._rewrite(record, first_time or changed, cause)
+            # рвётся не переставая — говорим об этом всё реже: череда
+            # одинаковых предупреждений сама становится тем шумом, от
+            # которого мы уходили
+            self._quiet = (
+                self._base_quiet
+                if first_time or changed
+                else min(self.MAX_QUIET, self._quiet * self.BACKOFF)
+            )
             self._last_report = now
             self._cause = cause
             self._suppressed = 0
