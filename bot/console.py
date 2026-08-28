@@ -166,6 +166,7 @@ class Startup:
     commit: str = ""
     tz: str = "Europe/Moscow"
     now: Optional[dt.datetime] = None
+    machine: str = ""
     db_path: str = ""
     db_bytes: int = 0
     counts: list[str] = field(default_factory=list)
@@ -196,6 +197,8 @@ def banner(info: Startup, palette: Optional[Palette] = None) -> str:
     when = info.now.strftime("%H:%M") if info.now else ""
     rows.append(("Часовой пояс", f"{info.tz}{f' · сейчас {when}' if when else ''}"))
 
+    if info.machine:
+        rows.append(("Машина", info.machine))
     if info.db_path:
         rows.append(("База", f"{info.db_path} · {human_size(info.db_bytes)}"))
     if info.counts:

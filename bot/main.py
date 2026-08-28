@@ -32,6 +32,7 @@ from .heartbeat import Heartbeat
 from .journal import Counter, JournalMiddleware
 from .middlewares import AccessMiddleware, UserMiddleware, now_for
 from .netlog import install as install_netlog
+from . import sysinfo
 from .reminders import ReminderScheduler, next_fire, wait_text
 from .updater import RESTART_CODE, UpdateWatcher, Updater
 from .voice import Transcriber, build_transcriber
@@ -275,6 +276,7 @@ async def collect_startup(
         except Exception:  # noqa: BLE001 - git мог быть не настроен
             logger.debug("Не смог узнать версию", exc_info=True)
 
+    info.machine = sysinfo.describe()
     info.db_path = console.short_path(config.db_path)
     try:
         info.db_bytes = os.path.getsize(config.db_path)

@@ -17,6 +17,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..db import Database
+from .. import sysinfo
 from ..formatting import duration, esc, plural
 from ..keyboards import update_actions
 from ..updater import STEP_ORDER, STEP_SHORT, STEP_TITLES, UpdateError, Updater
@@ -38,7 +39,9 @@ STEPS: tuple[tuple[str, str], ...] = tuple(
 HEARTBEAT_SECONDS = 15
 
 
-def render_progress(current: Optional[str], seen: set[str], elapsed: float) -> str:
+def render_progress(
+    current: Optional[str], seen: set[str], elapsed: float, load: str = ""
+) -> str:
     """Список шагов: сделанное — галочкой, текущее — с секундомером.
 
     Секундомер здесь не украшение: тесты идут полминуты, зависимости — минуты,
@@ -49,7 +52,8 @@ def render_progress(current: Optional[str], seen: set[str], elapsed: float) -> s
     for step, title in STEPS:
         if step == current:
             reached = True
-            lines.append(f"⏳ {title}… <i>{duration(elapsed)}</i>")
+            tail = f"{duration(elapsed)}" + (f" · {load}" if load else "")
+            lines.append(f"⏳ {title}… <i>{tail}</i>")
         elif reached:
             lines.append(f"◦ {title}")
         elif step in seen:
@@ -78,6 +82,11 @@ class ProgressReport:
         self._opened = time.monotonic()  # начало всего обновления
         self._started = time.monotonic()  # начало текущего шага
         self._spent: dict[str, float] = {}  # сколько занял каждый шаг
+        self._meter = sysinfo.CpuMeter()
+        self._meter.sample()  # точка отсчёта для загрузки процессора
+        self._load = ""  # что показывал компьютер на последнем замере
+        self._peak_cpu = 0
+        self._peak_mem = 0
         self._shown = ""
         self._ticker: Optional[asyncio.Task[None]] = None
 
@@ -107,6 +116,10 @@ class ProgressReport:
             for step, spent in self._spent.items()
             if spent >= 1 and step in STEP_SHORT
         ]
+        if self._peak_cpu:
+            parts.append(f"ЦП до {self._peak_cpu}%")
+        if self._peak_mem:
+            parts.append(f"память до {self._peak_mem}%")
         return " · ".join(parts)
 
     @property
@@ -135,9 +148,31 @@ class ProgressReport:
             await asyncio.sleep(self._heartbeat)
             await self._draw()
 
+    def _measure(self) -> None:
+        """Замер нагрузки: по нему видно, во что упирается обновление.
+
+        Процессор в потолке — значит, дело в машине и ждать придётся. Он
+        свободен, а время идёт — значит, упёрлись в диск или антивирус, и это
+        уже чинится.
+        """
+        busy = self._meter.sample()
+        state = sysinfo.memory()
+        if busy is not None:
+            self._peak_cpu = max(self._peak_cpu, busy)
+        if state is not None:
+            self._peak_mem = max(self._peak_mem, state.used_percent)
+
+        parts = []
+        if busy is not None:
+            parts.append(f"ЦП {busy}%")
+        if state is not None:
+            parts.append(f"память {state.used_percent}%")
+        self._load = " · ".join(parts)
+
     async def _draw(self) -> None:
+        self._measure()
         elapsed = time.monotonic() - self._started
-        text = render_progress(self._current, self._seen, elapsed)
+        text = render_progress(self._current, self._seen, elapsed, self._load)
         if text == self._shown:
             return
         try:

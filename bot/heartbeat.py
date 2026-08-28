@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Optional
 
+from . import sysinfo
 from .db import Database
 from .formatting import plural
 from .journal import Counter
@@ -49,6 +50,8 @@ class Heartbeat:
         self._interval = interval_seconds
         self._clock = clock
         self._started = clock()
+        self._meter = sysinfo.CpuMeter()
+        self._meter.sample()  # первый замер задаёт точку отсчёта
         self._task: Optional[asyncio.Task[None]] = None
 
     def start(self) -> None:
@@ -97,4 +100,7 @@ class Heartbeat:
                 at, wait = upcoming
                 parts.append(f"дальше {at:%H:%M} ({wait_text(wait)})")
 
+        load = sysinfo.load_line(self._meter)
+        if load:
+            parts.append(load)
         return " · ".join(parts)
