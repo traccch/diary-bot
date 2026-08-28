@@ -188,6 +188,8 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
         # диспетчер общий на прогон — данные, которые тесты меняют, чистим
         self.dp["proxy_now"] = ""
         self.dp["config_log_path"] = ""
+        self.dp["env_file"] = ""
+        self.dp["env_lookalikes"] = ()
 
         self.bot = RecordingBot()
         self._update_id = 0

@@ -72,6 +72,8 @@ async def run() -> int:
     db = Database(config.db_path, config.default_tz)
     await db.connect()
 
+    warn_about_env(config)
+
     proxy = config.proxy
     if proxy == AUTO:
         proxy = await proxyscan.find() or ""
@@ -102,6 +104,8 @@ async def run() -> int:
     dispatcher["transcriber"] = build_transcriber(config.voice)
     dispatcher["config_log_path"] = config.log_path
     dispatcher["proxy_now"] = proxy
+    dispatcher["env_file"] = config.env_file
+    dispatcher["env_lookalikes"] = config.env_lookalikes
 
     counter = Counter()
     journal = JournalMiddleware(counter)
@@ -255,6 +259,20 @@ async def announce_restart(bot: Bot, db: Database, version: str) -> None:
         await bot.send_message(int(chat_id), text)
     except (TelegramAPIError, ValueError):
         logger.debug("Не смог доложить о перезапуске", exc_info=True)
+
+
+def warn_about_env(config: Config) -> None:
+    """Ругается на файлы, похожие на .env, — правки уходят именно в них."""
+    if not config.env_file:
+        logger.warning(
+            "Файла .env не нашёл — беру настройки из окружения и умолчаний"
+        )
+    for path in config.env_lookalikes:
+        logger.warning(
+            "Рядом лежит %s — настройки из него не читаются. Похоже, Блокнот "
+            "дописал расширение: переименуй файл в .env",
+            os.path.basename(path),
+        )
 
 
 def build_session(proxy: str) -> Optional[AiohttpSession]:

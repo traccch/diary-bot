@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from .voice import VoiceConfig
 
@@ -37,6 +37,10 @@ class Config:
     proxy: str
     #: Куда писать журнал файлом.
     log_path: str
+    #: Из какого файла прочитаны настройки. Пусто — файла не нашлось.
+    env_file: str
+    #: Похожие файлы рядом: .env.txt от Блокнота и прочее «почти .env».
+    env_lookalikes: tuple[str, ...]
     voice: VoiceConfig
 
 
@@ -120,8 +124,29 @@ def read_allowed(raw: str, owner_id: Optional[int]) -> frozenset[int]:
     return frozenset(found)
 
 
+#: Как Блокнот и проводник калечат имя файла настроек.
+LOOKALIKES = (".env.txt", ".env.env", "env", "env.txt", ".env.ini", ".env.cfg")
+
+
+def find_lookalikes(env_file: str) -> tuple[str, ...]:
+    """Файлы, которые человек мог принять за .env.
+
+    Блокнот в Windows дописывает .txt, а проводник расширение прячет — и
+    получается, что правки уходят в файл, который никто не читает. Ошибка
+    выглядит как «настройка не работает», и догадаться про неё невозможно.
+    """
+    folder = os.path.dirname(os.path.abspath(env_file or ".env")) or "."
+    found = []
+    for name in LOOKALIKES:
+        candidate = os.path.join(folder, name)
+        if os.path.isfile(candidate):
+            found.append(candidate)
+    return tuple(found)
+
+
 def load_config() -> Config:
-    load_dotenv()
+    env_file = find_dotenv(usecwd=True)
+    load_dotenv(env_file)
 
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
@@ -155,6 +180,8 @@ def load_config() -> Config:
         auto_update_minutes=read_minutes(os.getenv("AUTO_UPDATE_MINUTES", "")),
         polling_timeout=polling_timeout,
         proxy=read_proxy(os.getenv("TELEGRAM_PROXY", "")),
+        env_file=env_file,
+        env_lookalikes=find_lookalikes(env_file),
         log_path=os.getenv("LOG_FILE", "").strip()
         or os.path.join(
             os.path.dirname(os.getenv("DB_PATH", "data/diary.db").strip() or "data/diary.db")

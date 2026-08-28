@@ -38,6 +38,46 @@ SAMPLE_SECONDS = 0.6
 DEFAULT_LOG = os.path.join("data", "bot.log")
 
 
+def env_lines(env_file: str, lookalikes: tuple = ()) -> list[str]:
+    """Что бот прочитал из настроек — и куда, возможно, ушли правки.
+
+    «Не работает настройка» чаще всего означает не ошибку в настройке, а то,
+    что правили другой файл. Пока не видно, какой файл прочитан, догадаться
+    невозможно.
+    """
+    lines = []
+    if env_file:
+        raw = _read_setting(env_file, "TELEGRAM_PROXY")
+        lines.append(f"Настройки читаю из <code>{esc(env_file)}</code>")
+        lines.append(
+            f"TELEGRAM_PROXY в нём: <b>{esc(raw)}</b>"
+            if raw
+            else "Строки <code>TELEGRAM_PROXY</code> в нём нет"
+        )
+    else:
+        lines.append("Файла <code>.env</code> не нашёл вовсе")
+
+    for path in lookalikes:
+        lines.append(
+            f"⚠️ Рядом лежит <code>{esc(os.path.basename(path))}</code> — "
+            "настройки оттуда не читаются. Блокнот дописал расширение; "
+            "переименуй файл в <code>.env</code>"
+        )
+    return lines
+
+
+def _read_setting(path: str, key: str) -> str:
+    try:
+        with open(path, encoding="utf-8-sig") as handle:
+            for line in handle:
+                clean = line.strip()
+                if clean.startswith(f"{key}="):
+                    return clean.split("=", 1)[1].strip() or "(пусто)"
+    except OSError:
+        return ""
+    return ""
+
+
 def disk_warning() -> str:
     """Предупреждение о свободном месте — молча кончившийся диск страшнее.
 
@@ -139,7 +179,12 @@ async def cmd_log(message: Message, config_log_path: str = "") -> None:
 
 
 @router.message(Command("proxy", "vpn"))
-async def cmd_proxy(message: Message, proxy_now: str = "") -> None:
+async def cmd_proxy(
+    message: Message,
+    proxy_now: str = "",
+    env_file: str = "",
+    env_lookalikes: tuple = (),
+) -> None:
     """Проверка прокси: что нашлось на этой машине и что бот использует."""
     from .. import proxyscan
 
@@ -154,6 +199,7 @@ async def cmd_proxy(message: Message, proxy_now: str = "") -> None:
         f"Бот сейчас ходит: <b>{esc(proxy_now)}</b>" if proxy_now
         else "Бот сейчас ходит: <b>напрямую</b>"
     )
+    lines.extend(env_lines(env_file, env_lookalikes))
     lines.append("")
 
     if working:

@@ -111,6 +111,47 @@ class ProxyCommandTest(BotTestCase):
         self.assertIn("7890", self.bot.edits[-1])
         self.assertIn("не прокси", self.bot.edits[-1])
 
+    async def test_says_which_file_it_read(self):
+        """«Не работает настройка» обычно значит «правил другой файл»."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("BOT_TOKEN=x\nTELEGRAM_PROXY=auto\n", encoding="utf-8")
+            self.dp["env_file"] = str(env)
+
+            first, second = self.patch(opened=set())
+            with first, second:
+                await self.send("/proxy")
+
+        answer = self.bot.edits[-1]
+        self.assertIn(".env", answer)
+        self.assertIn("TELEGRAM_PROXY в нём", answer)
+        self.assertIn("auto", answer)
+
+    async def test_notepad_leftover_is_pointed_out(self):
+        """Блокнот дописывает .txt, проводник расширение прячет."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("BOT_TOKEN=x\n", encoding="utf-8")
+            twin = Path(tmp) / ".env.txt"
+            twin.write_text("TELEGRAM_PROXY=auto\n", encoding="utf-8")
+
+            self.dp["env_file"] = str(env)
+            self.dp["env_lookalikes"] = (str(twin),)
+
+            first, second = self.patch(opened=set())
+            with first, second:
+                await self.send("/proxy")
+
+        answer = self.bot.edits[-1]
+        self.assertIn(".env.txt", answer)
+        self.assertIn("переименуй", answer.lower())
+
     async def test_shows_what_the_bot_uses_now(self):
         self.dp["proxy_now"] = "socks5://127.0.0.1:10808"
         first, second = self.patch(opened=set())
