@@ -57,6 +57,7 @@ COMMANDS = [
     BotCommand(command="car", description="Пробег: сводка по машине"),
     BotCommand(command="fuel", description="Топливо: литры, цены, расход"),
     BotCommand(command="status", description="Состояние бота и компьютера"),
+    BotCommand(command="proxy", description="Проверить, есть ли локальный прокси"),
     BotCommand(command="import", description="Загрузить операции файлом"),
     BotCommand(command="commands", description="Список всех команд"),
 ]
@@ -100,6 +101,7 @@ async def run() -> int:
     dispatcher["restart_event"] = restart_event
     dispatcher["transcriber"] = build_transcriber(config.voice)
     dispatcher["config_log_path"] = config.log_path
+    dispatcher["proxy_now"] = proxy
 
     counter = Counter()
     journal = JournalMiddleware(counter)

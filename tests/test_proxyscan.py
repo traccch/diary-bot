@@ -9,6 +9,8 @@ from unittest import mock
 from bot import proxyscan
 from bot.config import read_proxy
 
+from .test_handlers import BotTestCase
+
 
 class ReadProxyTest(unittest.TestCase):
     def test_auto_is_a_request_not_an_address(self):
@@ -67,6 +69,55 @@ class PortScanTest(unittest.IsolatedAsyncioTestCase):
             await server.wait_closed()
 
         self.assertFalse(await proxyscan.port_open(port))
+
+
+class ProxyCommandTest(BotTestCase):
+    """Проверка прокси в чате: человеку не видно консоли, а вопрос есть."""
+
+    def patch(self, opened, working=""):
+        async def port_open(port, host="127.0.0.1"):
+            return port in opened
+
+        async def works(url):
+            return url == working
+
+        return mock.patch.object(proxyscan, "port_open", port_open), mock.patch.object(
+            proxyscan, "works", works
+        )
+
+    async def test_nothing_open_means_no_vpn_here(self):
+        first, second = self.patch(opened=set())
+        with first, second:
+            await self.send("/proxy")
+
+        answer = self.bot.edits[-1]
+        self.assertIn("все известные порты", answer)
+        self.assertIn("только на телефоне", answer)
+
+    async def test_working_proxy_is_offered(self):
+        first, second = self.patch(opened={2080}, working="socks5://127.0.0.1:2080")
+        with first, second:
+            await self.send("/proxy")
+
+        answer = self.bot.edits[-1]
+        self.assertIn("socks5://127.0.0.1:2080", answer)
+        self.assertIn("TELEGRAM_PROXY=auto", answer)
+
+    async def test_open_but_useless_port(self):
+        first, second = self.patch(opened={7890})
+        with first, second:
+            await self.send("/proxy")
+
+        self.assertIn("7890", self.bot.edits[-1])
+        self.assertIn("не прокси", self.bot.edits[-1])
+
+    async def test_shows_what_the_bot_uses_now(self):
+        self.dp["proxy_now"] = "socks5://127.0.0.1:10808"
+        first, second = self.patch(opened=set())
+        with first, second:
+            await self.send("/proxy")
+
+        self.assertIn("socks5://127.0.0.1:10808", self.bot.edits[-1])
 
 
 if __name__ == "__main__":

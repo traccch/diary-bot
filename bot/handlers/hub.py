@@ -102,6 +102,7 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
             ("⬇️ Обновить бота", "do:set:update"),
             ("🖥 Состояние", "do:set:status"),
             ("📄 Журнал", "do:set:log"),
+            ("🌐 Прокси", "do:set:proxy"),
             ("📖 Все команды", "do:set:help"),
             ("ℹ️ О шкале и границах", "do:set:about"),
         ),
@@ -331,6 +332,7 @@ async def cb_settings(
     owner_id: Optional[int] = None,
     heartbeat=None,
     config_log_path: str = "",
+    proxy_now: str = "",
 ) -> None:
     from ..keyboards import reminder_list
     from . import common
@@ -369,6 +371,10 @@ async def cb_settings(
         from .status import build_status
 
         await message.answer(await build_status(db, user, now, updater, heartbeat))
+    elif action == "proxy":
+        from .status import cmd_proxy
+
+        await cmd_proxy(message, proxy_now)
     elif action == "log":
         from .status import cmd_log
 

@@ -138,6 +138,54 @@ async def cmd_log(message: Message, config_log_path: str = "") -> None:
     )
 
 
+@router.message(Command("proxy", "vpn"))
+async def cmd_proxy(message: Message, proxy_now: str = "") -> None:
+    """Проверка прокси: что нашлось на этой машине и что бот использует."""
+    from .. import proxyscan
+
+    note = await message.answer("🔍 Смотрю, есть ли на компьютере локальный прокси…")
+    probes = await proxyscan.scan()
+
+    working = [item for item in probes if item.good]
+    listening = [item for item in probes if item.open and not item.good]
+
+    lines = ["🌐 <b>Прокси</b>", ""]
+    lines.append(
+        f"Бот сейчас ходит: <b>{esc(proxy_now)}</b>" if proxy_now
+        else "Бот сейчас ходит: <b>напрямую</b>"
+    )
+    lines.append("")
+
+    if working:
+        lines.append("Нашёл рабочий прокси:")
+        lines.extend(f"· <code>{esc(item.url)}</code>" for item in working)
+        if not proxy_now:
+            lines.append("")
+            lines.append(
+                "<i>Впиши в .env строку <code>TELEGRAM_PROXY=auto</code> "
+                "и перезапусти бота — он будет ходить через него.</i>"
+            )
+    elif listening:
+        ports = ", ".join(str(item.port) for item in listening)
+        lines.append(
+            f"Порты {ports} кто-то слушает, но Telegram через них не открылся. "
+            "Похоже, это не прокси или он не пускает наружу."
+        )
+    else:
+        lines.append(
+            "Локального прокси на этом компьютере нет: все известные порты "
+            "закрыты."
+        )
+        lines.append("")
+        lines.append(
+            "<i>Обычно это значит, что VPN-приложение стоит только на телефоне "
+            "или не запущено. Бот работает и напрямую — просто связь рвётся "
+            "чаще.</i>"
+        )
+
+    await note.edit_text("\n".join(lines))
+
+
 @router.message(Command("status", "host", "machine"))
 async def cmd_status(
     message: Message,

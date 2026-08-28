@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
@@ -81,15 +82,48 @@ async def works(url: str) -> bool:
         return False
 
 
-async def find(ports: Sequence[tuple[int, tuple[str, ...]]] = KNOWN_PORTS) -> Optional[str]:
-    """Первый локальный прокси, через который видно Telegram. None — нет такого."""
+@dataclass(frozen=True)
+class Probe:
+    """Что нашлось на одном порту."""
+
+    port: int
+    open: bool
+    url: str = ""  # заполнен, если через него видно Telegram
+
+    @property
+    def good(self) -> bool:
+        return bool(self.url)
+
+
+async def scan(
+    ports: Sequence[tuple[int, tuple[str, ...]]] = KNOWN_PORTS
+) -> list[Probe]:
+    """Проходит по всем портам и рассказывает про каждый.
+
+    Отдельно от find(), потому что человеку важно не только «нашёл или нет»,
+    но и «а работает ли вообще моё VPN-приложение»: закрытые порты по всему
+    списку означают, что на этой машине его просто нет.
+    """
+    found: list[Probe] = []
     for port, schemes in ports:
         if not await port_open(port):
+            found.append(Probe(port, False))
             continue
+        working = ""
         for scheme in schemes:
             url = f"{scheme}://127.0.0.1:{port}"
             logger.debug("Пробую прокси %s", url)
             if await works(url):
-                logger.info("Нашёл локальный прокси: %s", url)
-                return url
+                working = url
+                break
+        found.append(Probe(port, True, working))
+    return found
+
+
+async def find(ports: Sequence[tuple[int, tuple[str, ...]]] = KNOWN_PORTS) -> Optional[str]:
+    """Первый локальный прокси, через который видно Telegram. None — нет такого."""
+    for probe in await scan(ports):
+        if probe.good:
+            logger.info("Нашёл локальный прокси: %s", probe.url)
+            return probe.url
     return None

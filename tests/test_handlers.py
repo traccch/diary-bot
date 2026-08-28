@@ -185,6 +185,9 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
         self.restart_event = asyncio.Event()
         self.dp["restart_event"] = self.restart_event
         self.dp["transcriber"] = build_transcriber(VoiceConfig())
+        # диспетчер общий на прогон — данные, которые тесты меняют, чистим
+        self.dp["proxy_now"] = ""
+        self.dp["config_log_path"] = ""
 
         self.bot = RecordingBot()
         self._update_id = 0
