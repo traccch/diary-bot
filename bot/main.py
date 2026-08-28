@@ -68,7 +68,7 @@ async def run() -> int:
     """Запускает бота. Возвращает код возврата: RESTART_CODE — «подними заново»."""
     config = load_config()
     palette = console.setup(config.log_level, config.log_path)
-    install_netlog()
+    netlog = install_netlog()
 
     db = Database(config.db_path, config.default_tz)
     await db.connect()
@@ -85,6 +85,7 @@ async def run() -> int:
         else:
             logger.info("Локального прокси не нашёл — иду напрямую")
 
+    netlog.proxied = bool(proxy)  # подсказка про обрывы зависит от этого
     try:
         session = build_session(proxy)
     except RuntimeError as exc:

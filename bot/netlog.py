@@ -47,12 +47,21 @@ SERVER_ERRORS = (
 NETWORK = "network"
 SERVER = "server"
 
+#: Подсказка меняется от того, включён ли прокси: советовать его тому, у кого
+#: он уже работает, — значит расписаться в том, что бота не слушают.
+NETWORK_DIRECT = (
+    "Соединение с Telegram рвётся и восстанавливается — обычно так ведёт "
+    "себя фильтрация трафика у провайдера. Бот работает: сообщения дойдут, "
+    "напоминания придут. Ровнее будет через прокси — /proxy auto."
+)
+NETWORK_PROXIED = (
+    "Соединение с Telegram рвётся и восстанавливается, хотя прокси включён — "
+    "значит, рвёт уже за ним: у самого VPN или дальше. Бот работает: "
+    "сообщения дойдут, напоминания придут."
+)
+
 HINTS = {
-    NETWORK: (
-        "Соединение с Telegram рвётся и восстанавливается — обычно так ведёт "
-        "себя фильтрация трафика у провайдера. Бот работает: сообщения дойдут, "
-        "напоминания придут. Ровнее будет через прокси — TELEGRAM_PROXY в .env."
-    ),
+    NETWORK: NETWORK_DIRECT,
     SERVER: (
         "Telegram отвечает ошибкой сервера — это на его стороне, а не у тебя: "
         "ни VPN, ни прокси тут ни при чём. Бот повторяет запрос сам, обычно "
@@ -71,6 +80,9 @@ HINT = HINTS[NETWORK]
 
 class FlakyNetworkFilter(logging.Filter):
     """Оставляет от череды обрывов одну строку раз в `quiet_seconds`."""
+
+    #: Ходим ли мы через прокси — от этого зависит, что советовать.
+    proxied = False
 
     #: Во сколько раз растёт пауза, если рвётся снова и снова.
     BACKOFF = 3
@@ -141,7 +153,10 @@ class FlakyNetworkFilter(logging.Filter):
     def _rewrite(self, record: logging.LogRecord, first_time: bool, cause: str) -> None:
         """Ошибка библиотеки превращается в понятное предупреждение."""
         if first_time:
-            text = f"⚠️ {HINTS[cause]}"
+            hint = HINTS[cause]
+            if cause == NETWORK and self.proxied:
+                hint = NETWORK_PROXIED
+            text = f"⚠️ {hint}"
         else:
             minutes = max(1, round(self._quiet / 60))
             times = self._suppressed + 1
@@ -157,9 +172,10 @@ class FlakyNetworkFilter(logging.Filter):
         record.exc_text = None
 
 
-def install(quiet_seconds: float = 300.0) -> FlakyNetworkFilter:
+def install(quiet_seconds: float = 300.0, proxied: bool = False) -> FlakyNetworkFilter:
     """Вешает фильтр на логгеры, через которые aiogram сообщает об обрывах."""
     network_filter = FlakyNetworkFilter(quiet_seconds)
+    network_filter.proxied = proxied
     for name in ("aiogram.dispatcher", "aiogram.event"):
         logging.getLogger(name).addFilter(network_filter)
     return network_filter

@@ -12,7 +12,7 @@ from bot.reminders import ReminderScheduler
 
 from .support import memory_db
 
-from .test_handlers import BotTestCase
+from .test_handlers import USER_ID, BotTestCase
 
 USER_ID = 777
 MONDAY = dt.date(2026, 8, 17)
@@ -172,3 +172,74 @@ class HealthButtonsTest(BotTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BareNumberAnswerTest(BotTestCase):
+    """Бот спросил про шаги — «5182» должно быть ответом, а не загадкой."""
+
+    def today(self) -> dt.date:
+        from bot.middlewares import now_for
+
+        return now_for("Europe/Moscow").date()
+
+    async def ask(self, kind: str) -> None:
+        from bot import pending
+        from bot.middlewares import now_for
+
+        await self.db.ensure_user(USER_ID)
+        await self.db.set_meta(
+            pending.key(USER_ID), pending.remember(kind, now_for("Europe/Moscow"))
+        )
+
+    async def test_steps_are_recorded(self):
+        await self.ask("steps")
+        answer = await self.send("5182")
+
+        self.assertIn("5 182", answer)
+        stored = await self.db.get_metric(USER_ID, "steps", self.today())
+        self.assertEqual(stored.value, 5182)
+
+    async def test_question_is_answered_once(self):
+        await self.ask("steps")
+        await self.send("5182")
+
+        # второе число — уже обычный текст, а не ответ на тот же вопрос
+        answer = await self.send("4000")
+        self.assertNotIn("Записал", answer)
+
+    async def test_old_question_does_not_catch_numbers(self):
+        from bot import pending
+        from bot.middlewares import now_for
+
+        stale = now_for("Europe/Moscow") - dt.timedelta(hours=5)
+        await self.db.ensure_user(USER_ID)
+        await self.db.set_meta(pending.key(USER_ID), pending.remember("steps", stale))
+
+        await self.send("5182")
+        self.assertIsNone(await self.db.get_metric(USER_ID, "steps", self.today()))
+
+    async def test_nonsense_value_falls_through(self):
+        """«900» на вопрос о пульсе — не пульс: пусть разбирают обычные правила."""
+        await self.ask("resting_pulse")
+        await self.send("900")
+        self.assertIsNone(await self.db.get_metric(USER_ID, "resting_pulse", self.today()))
+
+    async def test_mileage_answer(self):
+        from bot import sections
+
+        await self.ask(sections.CAR)
+        await self.send("203116")
+
+        # за записью пробега бот может спросить про ТО — смотрим всё сказанное
+        self.assertIn("203 116", "\n".join(self.bot.texts))
+        self.assertEqual((await self.db.last_reading(USER_ID)).km, 203116)
+
+    async def test_without_a_question_numbers_are_not_answers(self):
+        await self.db.ensure_user(USER_ID)
+        await self.send("5182")
+        self.assertIsNone(await self.db.get_metric(USER_ID, "steps", self.today()))
+
+    async def test_normal_text_still_works(self):
+        await self.ask("steps")
+        await self.send("кофе 300")
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)

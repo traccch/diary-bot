@@ -104,6 +104,31 @@ class SetupScriptTest(unittest.TestCase):
         self.assertIn(b"\r\n", ps1.read_bytes())
         self.assertNotIn(b"\r\n", sh.read_bytes())
 
+    def test_powershell_file_has_a_bom(self):
+        """Без BOM PowerShell 5.1 читает файл в кодировке системы.
+
+        Русский текст превращается в мусор, мусор ломает кавычки, и скрипт
+        падает разбором ещё до первой строчки дела.
+        """
+        root = Path(__file__).resolve().parent.parent
+        data = (root / "tools" / "setup-voice.ps1").read_bytes()
+        self.assertTrue(data.startswith(b"\xef\xbb\xbf"), "нет BOM")
+        self.assertIn("OutputEncoding", data.decode("utf-8-sig"))
+
+    def test_powershell_quotes_are_balanced(self):
+        """Непарная кавычка в русской строке — та же беда, что и без BOM."""
+        root = Path(__file__).resolve().parent.parent
+        text = (root / "tools" / "setup-voice.ps1").read_bytes().decode("utf-8-sig")
+
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            with self.subTest(line=number):
+                self.assertEqual(line.count('"') % 2, 0, line.strip()[:60])
+
+        self.assertEqual(text.count("{"), text.count("}"))
+        self.assertEqual(text.count("("), text.count(")"))
+
     def test_powershell_checks_what_it_downloaded(self):
         root = Path(__file__).resolve().parent.parent
         text = (root / "tools" / "setup-voice.ps1").read_text(encoding="utf-8")

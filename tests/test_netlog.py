@@ -36,7 +36,7 @@ class FilterTest(unittest.TestCase):
         item = record(FAILED)
         self.assertTrue(self.filter.filter(item))
         self.assertEqual(item.levelname, "WARNING")
-        self.assertIn("TELEGRAM_PROXY", item.getMessage())
+        self.assertIn("/proxy auto", item.getMessage())
 
     def test_next_ones_are_swallowed(self):
         self.filter.filter(record(FAILED))
@@ -65,6 +65,21 @@ class FilterTest(unittest.TestCase):
                 self.assertTrue(self.filter.filter(item))
                 self.assertEqual(item.levelname, "ERROR")
                 self.assertEqual(item.getMessage(), message)
+
+    def test_hint_depends_on_the_proxy(self):
+        """Советовать прокси тому, у кого он включён, — значит его не слушать."""
+        item = record(FAILED)
+        self.filter.filter(item)
+        self.assertIn("/proxy auto", item.getMessage())
+
+        self.filter._last_report = None  # как при новом запуске
+        self.filter._cause = None
+        self.filter.proxied = True
+
+        item = record(FAILED)
+        self.filter.filter(item)
+        self.assertIn("хотя прокси включён", item.getMessage())
+        self.assertNotIn("/proxy auto", item.getMessage())
 
     def test_server_errors_get_their_own_explanation(self):
         """502 — это Telegram приболел, и советовать тут VPN просто вредно."""

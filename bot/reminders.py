@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 
-from . import prompts, sections
+from . import pending, prompts, sections
 from .db import Database
 from .car.handlers import entry_actions as car_actions
 from .keyboards import health_prompt, reminder_actions
@@ -183,6 +183,10 @@ class ReminderScheduler:
                 continue
 
             if candidate.topic == sections.CAR:
+                await self._db.set_meta(
+                    pending.key(candidate.user_id),
+                    pending.remember(sections.CAR, now),
+                )
                 last = await self._db.last_reading(candidate.user_id)
                 sent += await self._send(
                     candidate.user_id,
@@ -212,6 +216,10 @@ class ReminderScheduler:
         if prompt is None:
             logger.debug("Про самочувствие сегодня спрашивать нечего: %s", user_id)
             return 0
+        # запоминаем вопрос: на него могут ответить просто числом
+        await self._db.set_meta(
+            pending.key(user_id), pending.remember(prompt.kind, now)
+        )
         return await self._send(
             user_id, prompts.render(prompt), sections.HEALTH, health_prompt(prompt)
         )

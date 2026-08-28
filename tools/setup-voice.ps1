@@ -1,10 +1,11 @@
-# Установка распознавания голосовых: whisper.cpp + модель + ffmpeg.
+﻿# Установка распознавания голосовых: whisper.cpp + модель + ffmpeg.
 #
 # Всё кладётся в tools\whisper внутри папки бота — бот найдёт это сам, ничего
 # вписывать не нужно. Скрипт можно запускать повторно: уже скачанное
 # пропускается.
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ProgressPreference = "SilentlyContinue"
 
 $root = Split-Path -Parent $PSScriptRoot

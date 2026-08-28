@@ -21,6 +21,8 @@ from aiogram.types import Message, Voice
 from .. import sections
 from ..db import Database, UserSettings
 from ..keyboards import section_menu
+from .. import pending, prompts
+from ..car.handlers import save as save_mileage
 from ..car.handlers import try_mileage
 from ..car.parsing import strip_mileage
 from ..english import handlers as english
@@ -140,10 +142,45 @@ async def voice_message(
     await free_text_like(message, text, db, user, now)
 
 
+async def try_answer(
+    message: Message, text: str, db: Database, user: UserSettings, now: dt.datetime
+) -> bool:
+    """Голое число сразу после вопроса — ответ на него.
+
+    Бот спросил про шаги, человек прислал «5182». Разбирать это как трату или
+    давление бессмысленно: вопрос задавал он сам, и минуту назад.
+    """
+    value = pending.as_number(text)
+    if value is None:
+        return False
+
+    asked = pending.recall(await db.get_meta(pending.key(user.user_id)), now)
+    if not asked:
+        return False
+
+    if asked == sections.CAR:
+        await db.set_meta(pending.key(user.user_id), "")
+        await save_mileage(message, int(value), db, user, now.date())
+        return True
+
+    clean = prompts.clean(asked, str(value))
+    if clean is None:
+        return False  # не похоже на ответ — пусть разбирают обычные правила
+
+    await db.set_meta(pending.key(user.user_id), "")
+    await db.set_metric(user.user_id, asked, now.date(), clean)
+    await message.answer(prompts.confirm(asked, clean))
+    return True
+
+
 async def free_text_like(
     message: Message, text: str, db: Database, user: UserSettings, now: dt.datetime
 ) -> None:
     """Разбор строки так же, как обычного сообщения — общий путь для голоса."""
+    # число в ответ на вопрос бота — это ответ, а не загадка
+    if await try_answer(message, text, db, user, now):
+        return
+
     # «пробег 203116» разбираем первым: иначе это станет тратой в двести тысяч
     if await try_mileage(message, text, db, user, now.date()):
         text = strip_mileage(text)
