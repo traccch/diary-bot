@@ -87,6 +87,47 @@ class StorageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.storage.get_state(KEY))
 
 
+class ShiftedClockTest(unittest.IsolatedAsyncioTestCase):
+    """Часы базы и часы питона — разные часы.
+
+    Метку времени ставит SQLite, а он пишет UTC. Если сравнивать её с местным
+    временем, то в поясе UTC+7 «полчаса назад» окажется в будущем: живых
+    разговоров не найдётся никогда, а брошенными окажутся все — включая
+    только что начатые. На машине в UTC это незаметно, поэтому проверяем
+    нарочно сдвинутыми часами.
+    """
+
+    async def test_busy_and_stale_do_not_depend_on_the_local_clock(self):
+        import os
+        import time
+
+        if not hasattr(time, "tzset"):  # pragma: no cover - Windows
+            self.skipTest("часовой пояс процесса меняется только на Unix")
+
+        was = os.environ.get("TZ")
+        os.environ["TZ"] = "Asia/Krasnoyarsk"
+        time.tzset()
+        try:
+            db = memory_db()
+            await db.connect()
+            storage = SQLiteStorage(db.conn)
+            try:
+                await storage.set_state(KEY, "EngSession:answering")
+                self.assertTrue(await storage.busy())
+                self.assertEqual(await storage.forget_stale(), 0)
+                self.assertEqual(
+                    await storage.get_state(KEY), "EngSession:answering"
+                )
+            finally:
+                await db.close()
+        finally:
+            if was is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = was
+            time.tzset()
+
+
 class SurvivesRestartTest(unittest.IsolatedAsyncioTestCase):
     """Главное, ради чего всё затевалось: сессия переживает перезапуск бота."""
 
@@ -141,10 +182,13 @@ class PostponedUpdateTest(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
 
     async def test_waits_for_the_talk_to_end(self):
+        from bot.updater import UpdateStatus
+
         await self.storage.set_state(KEY, "EngSession:answering")
         install = await self.installer()
+        status = UpdateStatus(branch="main", local="aaa", remote="bbb", behind=1)
 
-        await install(777, None)  # не должно ничего отправить
+        await install(777, status)  # не должно ничего отправить
         self.assertEqual(self.sent, [])
 
         # и метку «уже сообщали» снимаем, чтобы вернуться к обновлению позже

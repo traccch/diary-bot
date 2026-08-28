@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import logging
 from typing import Any, Mapping, Optional
@@ -108,24 +107,22 @@ class SQLiteStorage(BaseStorage):
 
         По этому признаку обновление откладывается: перебивать человека
         посреди сессии — худшее, что может сделать фоновая задача.
+
+        Время сравнивается целиком на стороне базы. Метки ставит SQLite, а он
+        пишет UTC; питоновское `now()` вернуло бы местное время, и в поясе
+        UTC+7 «полчаса назад» оказалось бы в будущем — незаконченных
+        разговоров не находилось бы никогда.
         """
-        since = (dt.datetime.now() - dt.timedelta(minutes=minutes)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
         cur = await self._conn.execute(
-            "SELECT 1 FROM fsm_state WHERE state IS NOT NULL AND updated_at >= ?"
-            " LIMIT 1",
-            (since,),
+            "SELECT 1 FROM fsm_state WHERE state IS NOT NULL"
+            f" AND updated_at >= datetime('now', '-{int(minutes)} minutes') LIMIT 1"
         )
         return await cur.fetchone() is not None
 
     async def forget_stale(self, minutes: int = STALE_MINUTES * 4) -> int:
         """Убирает разговоры, к которым никто не вернулся."""
-        since = (dt.datetime.now() - dt.timedelta(minutes=minutes)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
         cur = await self._conn.execute(
-            "DELETE FROM fsm_state WHERE updated_at < ?", (since,)
+            f"DELETE FROM fsm_state WHERE updated_at < datetime('now', '-{int(minutes)} minutes')"
         )
         await self._conn.commit()
         return cur.rowcount
