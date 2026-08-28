@@ -397,11 +397,15 @@ class Updater:
 
 
 class UpdateWatcher:
-    """Раз в несколько часов смотрит, не появилось ли новой версии.
+    """Следит, не появилось ли новой версии, и делает то, о чём просили.
 
-    Сам ничего не применяет: молча тянуть код на машину, к которой хозяин не
-    подходил, — плохая идея. Приходит сообщение с кнопкой, решение за человеком.
-    Про один и тот же коммит напоминаем ровно раз.
+    Два режима. «Сказать» — приходит сообщение с кнопкой, решение за человеком:
+    молча тянуть код на машину, к которой хозяин не подходил, — вообще-то
+    плохая идея. «Поставить» — бот обновляется сам; это осмысленно ровно
+    потому, что перед перезапуском он прогоняет тесты и откатывается, если
+    они не сошлись, — то есть кнопка «Обновить» и так была формальностью.
+
+    Про один и тот же коммит беспокоим ровно раз.
     """
 
     def __init__(
@@ -410,13 +414,15 @@ class UpdateWatcher:
         db,
         updater: "Updater",
         owner_id: Optional[int] = None,
-        interval_hours: int = 6,
+        interval_hours: float = 6,
+        installer: Optional[Callable[[int, UpdateStatus], Awaitable[None]]] = None,
     ) -> None:
         self._bot = bot
         self._db = db
         self._updater = updater
         self._owner_id = owner_id
-        self._interval = interval_hours * 3600
+        self._interval = max(30.0, interval_hours * 3600)
+        self._installer = installer
         self._task: Optional[asyncio.Task[None]] = None
 
     def start(self) -> None:
@@ -457,6 +463,13 @@ class UpdateWatcher:
             return False
         if await self._db.get_meta("notified_commit") == status.remote:
             return False
+
+        if self._installer is not None:
+            # ставим сами — но пометку кладём заранее: если обновление сорвётся,
+            # не хочется пытаться каждые пять минут по кругу
+            await self._db.set_meta("notified_commit", status.remote)
+            await self._installer(owner, status)
+            return True
 
         from .keyboards import update_actions  # локально: иначе кольцо импортов
 

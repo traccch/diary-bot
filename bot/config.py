@@ -24,7 +24,11 @@ class Config:
     #: Кому вообще можно писать боту. Пусто — только хозяину (тому, кто
     #: написал первым, или тому, кто указан в OWNER_ID).
     allowed_users: frozenset[int]
-    auto_update_check: bool
+    #: Что делать с новой версией: «install» — ставить сам, «notify» — сказать
+    #: и ждать кнопку, «off» — не смотреть вовсе.
+    auto_update: str
+    #: Как часто смотреть, не вышло ли обновление (в минутах).
+    auto_update_minutes: int
     #: Сколько секунд держать запрос обновлений открытым. Через фильтрующие
     #: сети длинный запрос обрывают на полуслове, поэтому по умолчанию короче
     #: аиограмовских 30 секунд.
@@ -64,6 +68,36 @@ def read_proxy(raw: str) -> str:
         # «127.0.0.1:2080» — понятно, что имелось в виду
         return "socks5://" + value
     raise RuntimeError(PROXY_HELP.format(value=value[:40]))
+
+
+#: Режимы обновления.
+INSTALL = "install"
+NOTIFY = "notify"
+OFF = "off"
+
+#: Как часто смотреть за обновлениями. Чаще минуты — это уже не про обновления.
+DEFAULT_UPDATE_MINUTES = 5
+MIN_UPDATE_MINUTES, MAX_UPDATE_MINUTES = 1, 24 * 60
+
+
+def read_auto_update(raw: str, legacy: str = "") -> str:
+    """Режим обновления. Старое AUTO_UPDATE_CHECK=0 по-прежнему выключает всё."""
+    value = raw.strip().lower()
+    if value in {INSTALL, NOTIFY, OFF}:
+        return value
+    if value in {"1", "true", "yes", "on", "auto", "сам"}:
+        return INSTALL
+    if value in {"0", "false", "no"}:
+        return OFF
+    if legacy.strip().lower() in {"0", "false", "no", "off"}:
+        return OFF
+    return INSTALL
+
+
+def read_minutes(raw: str) -> int:
+    value = raw.strip()
+    minutes = int(value) if value.isdigit() else DEFAULT_UPDATE_MINUTES
+    return max(MIN_UPDATE_MINUTES, min(minutes, MAX_UPDATE_MINUTES))
 
 
 def read_allowed(raw: str, owner_id: Optional[int]) -> frozenset[int]:
@@ -107,8 +141,10 @@ def load_config() -> Config:
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         owner_id=owner_id,
         allowed_users=read_allowed(os.getenv("ALLOWED_USERS", ""), owner_id),
-        auto_update_check=os.getenv("AUTO_UPDATE_CHECK", "1").strip().lower()
-        not in {"0", "false", "no", "off"},
+        auto_update=read_auto_update(
+            os.getenv("AUTO_UPDATE", ""), os.getenv("AUTO_UPDATE_CHECK", "")
+        ),
+        auto_update_minutes=read_minutes(os.getenv("AUTO_UPDATE_MINUTES", "")),
         polling_timeout=polling_timeout,
         proxy=read_proxy(os.getenv("TELEGRAM_PROXY", "")),
         voice=VoiceConfig(

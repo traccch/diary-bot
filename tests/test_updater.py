@@ -267,14 +267,16 @@ class WatcherTest(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         self._tmp.cleanup()
 
-    def watcher(self, behind: int, remote: str = "abc1234"):
+    def status(self, behind: int, remote: str = "abc1234"):
         from bot.updater import UpdateStatus
 
-        status = UpdateStatus(
+        return UpdateStatus(
             branch="main", local="0000000", remote=remote, behind=behind,
             messages=["Починил разбор сна"],
         )
-        return UpdateWatcher(self.bot, self.db, FakeUpdater(status))
+
+    def watcher(self, behind: int, remote: str = "abc1234"):
+        return UpdateWatcher(self.bot, self.db, FakeUpdater(self.status(behind, remote)))
 
     async def test_notifies_once_per_commit(self):
         watcher = self.watcher(behind=1)
@@ -293,6 +295,34 @@ class WatcherTest(unittest.IsolatedAsyncioTestCase):
     async def test_silent_when_up_to_date(self):
         self.assertFalse(await self.watcher(behind=0).check_once())
         self.assertEqual(self.bot.sent, [])
+
+    async def test_installs_itself_when_asked(self):
+        """Режим «ставить сам»: кнопку никто не нажимает, ставится всё равно."""
+        installed = []
+
+        async def installer(owner, status):
+            installed.append((owner, status.behind))
+
+        watcher = UpdateWatcher(
+            self.bot, self.db, FakeUpdater(self.status(behind=2)), installer=installer
+        )
+        self.assertTrue(await watcher.check_once())
+        self.assertEqual(installed, [(777, 2)])
+        self.assertEqual(self.bot.sent, [])  # сообщение шлёт сам установщик
+
+    async def test_failed_install_is_not_retried_in_a_loop(self):
+        """Сорвалось — пробуем на следующем коммите, а не каждые пять минут."""
+        tries = []
+
+        async def installer(owner, status):
+            tries.append(status.remote)
+
+        updater = FakeUpdater(self.status(behind=1))
+        watcher = UpdateWatcher(self.bot, self.db, updater, installer=installer)
+
+        await watcher.check_once()
+        await watcher.check_once()
+        self.assertEqual(tries, ["abc1234"])
 
     async def test_silent_without_owner(self):
         empty = Database(str(Path(self._tmp.name) / "empty.db"), "Europe/Moscow")
@@ -335,6 +365,31 @@ class RestartFlagTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(dispatcher.stopped)
         # короткий long poll: через фильтрующую сеть длинный запрос обрывают
         self.assertEqual(dispatcher.polling_timeout, 15)
+
+
+class AutoUpdateConfigTest(unittest.TestCase):
+    """Режим обновления: ставить самому, спрашивать или не смотреть вовсе."""
+
+    def test_modes(self):
+        from bot.config import read_auto_update
+
+        self.assertEqual(read_auto_update(""), "install")
+        self.assertEqual(read_auto_update("notify"), "notify")
+        self.assertEqual(read_auto_update("off"), "off")
+        self.assertEqual(read_auto_update("сам"), "install")
+
+    def test_old_setting_still_switches_it_off(self):
+        from bot.config import read_auto_update
+
+        self.assertEqual(read_auto_update("", legacy="0"), "off")
+
+    def test_interval_is_sane(self):
+        from bot.config import read_minutes
+
+        self.assertEqual(read_minutes(""), 5)
+        self.assertEqual(read_minutes("30"), 30)
+        self.assertEqual(read_minutes("0"), 1)
+        self.assertEqual(read_minutes("99999"), 24 * 60)
 
 
 class WordingTest(unittest.TestCase):

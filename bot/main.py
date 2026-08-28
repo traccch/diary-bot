@@ -26,7 +26,8 @@ from .config import Config, load_config
 from .db import Database
 from .handlers import build_router
 from .formatting import duration
-from .handlers.update import RESTART_NOTICE
+from .config import INSTALL, OFF
+from .handlers.update import RESTART_NOTICE, ProgressReport, render_status
 from .heartbeat import Heartbeat
 from .journal import Counter, JournalMiddleware
 from .middlewares import AccessMiddleware, UserMiddleware, now_for
@@ -98,8 +99,19 @@ async def run() -> int:
     dispatcher.include_router(build_router())
 
     scheduler = ReminderScheduler(bot, db)
-    watcher = UpdateWatcher(bot, db, updater, config.owner_id)
     heartbeat = Heartbeat(db, counter)
+    watcher = UpdateWatcher(
+        bot,
+        db,
+        updater,
+        config.owner_id,
+        interval_hours=config.auto_update_minutes / 60,
+        installer=(
+            make_installer(bot, db, updater, restart_event)
+            if config.auto_update == INSTALL
+            else None
+        ),
+    )
 
     try:
         try:
@@ -131,7 +143,7 @@ async def run() -> int:
 
         scheduler.start()
         heartbeat.start()
-        if config.auto_update_check and updater.is_git_repo():
+        if config.auto_update != OFF and updater.is_git_repo():
             watcher.start()
 
         await announce_restart(bot, db, startup.commit)
@@ -150,6 +162,42 @@ async def run() -> int:
         await scheduler.stop()
         await db.close()
         await bot.session.close()
+
+
+def make_installer(bot: Bot, db: Database, updater: Updater, restart_event: asyncio.Event):
+    """Ставит обновление само, показывая всё то же, что и по кнопке.
+
+    Автоматическое обновление осмысленно ровно потому, что перед перезапуском
+    прогоняются тесты, а на красных бот откатывается сам. Кнопка «Обновить»
+    при таком раскладе была формальностью — но молчать об установке нельзя:
+    человек должен видеть, что и когда с его ботом произошло.
+    """
+
+    async def install(owner: int, status) -> None:
+        head = await bot.send_message(
+            owner,
+            "⬇️ <b>Обновляюсь сам</b>\n" + render_status(status),
+        )
+        report = ProgressReport(head)
+        await report.start()
+
+        try:
+            result = await updater.apply(progress=report)
+        except Exception:  # noqa: BLE001 - обновление не должно ронять бота
+            logger.exception("Автообновление сорвалось")
+            await report.finish(
+                "⚠️ Автообновление сорвалось, подробности в логах. "
+                "Бот работает как работал."
+            )
+            return
+
+        await report.finish(("✅ " if result.ok else "⚠️ ") + result.message)
+        if result.restart:
+            await db.set_meta("notified_commit", "")
+            await db.set_meta(RESTART_NOTICE, f"{owner}|{time.time():.0f}")
+            restart_event.set()
+
+    return install
 
 
 async def restarting_now(db: Database) -> bool:
@@ -279,11 +327,14 @@ async def collect_startup(
             config.proxy or "напрямую",
         ),
         (
-            "Автообновление",
-            config.auto_update_check and updater.is_git_repo(),
-            "проверяю раз в 6 часов"
-            if config.auto_update_check and updater.is_git_repo()
-            else "выключено",
+            "Обновления",
+            config.auto_update != OFF and updater.is_git_repo(),
+            {
+                INSTALL: f"ставлю сам · смотрю раз в {config.auto_update_minutes} мин",
+                "notify": f"спрашиваю · смотрю раз в {config.auto_update_minutes} мин",
+            }.get(config.auto_update, "выключены")
+            if updater.is_git_repo()
+            else "не git-репозиторий",
         ),
     ]
     return info
