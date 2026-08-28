@@ -423,6 +423,58 @@ class DurationTest(unittest.TestCase):
         self.assertEqual(duration(4520), "1 ч 15 мин")
 
 
+class WatchdogTest(unittest.IsolatedAsyncioTestCase):
+    """Зависший прогон должен кончаться откатом, а не молчанием навсегда."""
+
+    async def test_hung_tests_end_in_a_rollback(self):
+        import asyncio
+
+        from bot import updater as updater_module
+
+        rolled_back = []
+
+        class Hanging(updater_module.Updater):
+            def is_git_repo(self):
+                return True
+
+            async def is_dirty(self):
+                return False
+
+            async def check(self):
+                return updater_module.UpdateStatus(
+                    branch="main", local="aaa", remote="bbb", behind=1
+                )
+
+            async def commit(self, ref="HEAD"):
+                return "aaa"
+
+            async def _git(self, *args, timeout=None):
+                return ""
+
+            async def _requirements_changed(self, before):
+                return False
+
+            async def _run_tests(self):
+                await asyncio.sleep(3600)  # прогон подвис
+
+            async def _rollback(self, commit):
+                rolled_back.append(commit)
+
+        updater_module.WATCHDOG_EXTRA = 0
+        updater_module.TESTS_TIMEOUT = 0.2
+        try:
+            result = await Hanging().apply()
+        finally:
+            updater_module.WATCHDOG_EXTRA = 120
+            updater_module.TESTS_TIMEOUT = 600
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.restart)
+        self.assertIn("не закончились", result.message)
+        self.assertIn("/update force", result.message)
+        self.assertEqual(rolled_back, ["aaa"])
+
+
 class ShardingTest(unittest.TestCase):
     """Тесты раздаются процессам: на старой машине полный прогон идёт минутами."""
 

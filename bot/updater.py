@@ -103,6 +103,8 @@ _TEST_LINE = re.compile(r"^    (?:async )?def test_")
 GIT_TIMEOUT = 120
 PIP_TIMEOUT = 900  # matplotlib и numpy ставятся долго
 TESTS_TIMEOUT = 600
+#: Сколько ждать сверх этого, прежде чем считать зависшим сам прогон.
+WATCHDOG_EXTRA = 120
 
 
 @dataclass(frozen=True)
@@ -179,10 +181,25 @@ async def run_command(
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
+        await _stop(process)
         raise UpdateError(f"Команда {' '.join(args[:2])} не уложилась в {timeout} с")
     return process.returncode, stdout.decode("utf-8", "replace").strip()
+
+
+async def _stop(process) -> None:
+    """Убивает зависший процесс, не зависая на этом сам.
+
+    Ожидание завершения после kill() выглядит безобидно, но на Windows умеет
+    висеть вечно — а мы как раз в обработке чужого зависания.
+    """
+    try:
+        process.kill()
+    except (ProcessLookupError, OSError):
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=10)
+    except (asyncio.TimeoutError, ProcessLookupError):
+        logger.warning("Процесс не отзывается даже на kill — оставляю его системе")
 
 
 async def _step(progress: Progress, step: str) -> None:
@@ -494,7 +511,21 @@ class Updater:
 
         if run_tests:
             await _step(progress, TESTS)
-            passed, tail = await self._run_tests()
+            try:
+                # свой срок на весь прогон: у каждой команды он есть, но если
+                # зависнет само ожидание, обновление молча замрёт навсегда —
+                # так и случилось однажды: тесты «шли» пять часов
+                passed, tail = await asyncio.wait_for(
+                    self._run_tests(), timeout=TESTS_TIMEOUT + WATCHDOG_EXTRA
+                )
+            except asyncio.TimeoutError:
+                await self._rollback(before)
+                return UpdateResult(
+                    False,
+                    "Тесты не закончились за отведённое время — вернул прежнюю "
+                    "версию. Такое бывает, когда прогон подвис; попробуй позже "
+                    "или поставь без тестов: <code>/update force</code>.",
+                )
             if not passed:
                 await self._rollback(before)
                 return UpdateResult(
