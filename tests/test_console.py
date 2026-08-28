@@ -256,6 +256,7 @@ class StartupTest(unittest.IsolatedAsyncioTestCase):
             default_tz="Europe/Moscow",
             log_level="INFO",
             owner_id=None,
+            allowed_users=frozenset(),
             auto_update_check=False,
             polling_timeout=15,
             proxy="",

@@ -77,6 +77,13 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
             ("⚖️ Вес", "do:health:weight"),
         ),
     ),
+    "car": (
+        "🚗 <b>Пробег</b>",
+        (
+            ("✍️ Записать пробег", "do:car:add"),
+            ("📊 Сводка", "do:car:stats"),
+        ),
+    ),
     "eng": (
         "🇬🇧 <b>Английский</b>",
         (
@@ -106,10 +113,11 @@ def home_keyboard():
         ("💰 Деньги", "do:money"),
         ("🫀 Самочувствие", "do:health"),
         ("🇬🇧 Английский", "do:eng"),
+        ("🚗 Пробег", "do:car"),
         ("⚙️ Настройки", "do:settings"),
     ):
         builder.button(text=text, callback_data=data)
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2)
     return builder.as_markup()
 
 
@@ -256,6 +264,31 @@ async def cb_health(
     await message.answer(
         prompts.render(prompt) + known, reply_markup=health_prompt(prompt)
     )
+
+
+@router.callback_query(F.data.startswith("do:car:"))
+async def cb_car(
+    callback: CallbackQuery,
+    db: Database,
+    user: UserSettings,
+    now: dt.datetime,
+    state: FSMContext,
+) -> None:
+    from ..car import handlers as car
+    from ..car import stats as car_stats
+
+    action = (callback.data or "").split(":")[2]
+    message = callback.message
+    if not isinstance(message, Message):
+        await callback.answer()
+        return
+
+    await callback.answer()
+    if action == "add":
+        await state.set_state(car.CarEntry.waiting_km)
+        await message.answer(car.ASK + "\n\n<i>Передумал — /cancel</i>")
+    elif action == "stats":
+        await message.answer(await car_stats.build_report(db, user, now.date()))
 
 
 @router.callback_query(F.data.startswith("do:eng:"))

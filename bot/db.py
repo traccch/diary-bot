@@ -17,6 +17,8 @@ from typing import Optional
 import aiosqlite
 
 from . import sections
+from .car.db import SCHEMA as CAR_SCHEMA
+from .car.db import CarRepo
 from .english.db import SCHEMA as ENGLISH_SCHEMA
 from .english.db import EnglishRepo
 from .money.db import SCHEMA as MONEY_SCHEMA
@@ -35,6 +37,7 @@ DEFAULT_REMINDERS: dict[str, tuple[str, ...]] = {
     sections.MONEY: ("21:30",),
     sections.ENGLISH: ("13:00", "19:30"),
     sections.HEALTH: ("09:30", "22:00"),
+    sections.CAR: ("07:30",),
 }
 
 #: Целевые значения по умолчанию — домашние измерения (ESC/ESH: АГ при ≥135/85).
@@ -78,7 +81,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
-SCHEMA = CORE_SCHEMA + PRESSURE_SCHEMA + MONEY_SCHEMA + ENGLISH_SCHEMA
+SCHEMA = CORE_SCHEMA + PRESSURE_SCHEMA + MONEY_SCHEMA + ENGLISH_SCHEMA + CAR_SCHEMA
 
 
 _CREATE_TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\);", re.DOTALL)
@@ -152,7 +155,7 @@ def _row_to_reminder(row: aiosqlite.Row) -> Reminder:
     )
 
 
-class Database(PressureRepo, MoneyRepo, EnglishRepo):
+class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
     def __init__(self, path: str, default_tz: str) -> None:
         self._path = path
         self._default_tz = default_tz

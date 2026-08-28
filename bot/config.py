@@ -21,6 +21,9 @@ class Config:
     #: Кому разрешено обновлять бота. Не задан — хозяином считается тот,
     #: кто первым написал боту.
     owner_id: Optional[int]
+    #: Кому вообще можно писать боту. Пусто — только хозяину (тому, кто
+    #: написал первым, или тому, кто указан в OWNER_ID).
+    allowed_users: frozenset[int]
     auto_update_check: bool
     #: Сколько секунд держать запрос обновлений открытым. Через фильтрующие
     #: сети длинный запрос обрывают на полуслове, поэтому по умолчанию короче
@@ -63,6 +66,18 @@ def read_proxy(raw: str) -> str:
     raise RuntimeError(PROXY_HELP.format(value=value[:40]))
 
 
+def read_allowed(raw: str, owner_id: Optional[int]) -> frozenset[int]:
+    """Список тех, кому можно писать боту. Хозяин в нём всегда."""
+    found = {
+        int(part)
+        for part in raw.replace(",", " ").split()
+        if part.lstrip("-").isdigit()
+    }
+    if owner_id is not None:
+        found.add(owner_id)
+    return frozenset(found)
+
+
 def load_config() -> Config:
     load_dotenv()
 
@@ -91,6 +106,7 @@ def load_config() -> Config:
         default_tz=tz,
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         owner_id=owner_id,
+        allowed_users=read_allowed(os.getenv("ALLOWED_USERS", ""), owner_id),
         auto_update_check=os.getenv("AUTO_UPDATE_CHECK", "1").strip().lower()
         not in {"0", "false", "no", "off"},
         polling_timeout=polling_timeout,

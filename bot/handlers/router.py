@@ -21,6 +21,8 @@ from aiogram.types import Message, Voice
 from .. import sections
 from ..db import Database, UserSettings
 from ..keyboards import section_menu
+from ..car.handlers import try_mileage
+from ..car.parsing import strip_mileage
 from ..english import handlers as english
 from ..english.lookup import try_lookup
 from ..money import handlers as money
@@ -142,6 +144,12 @@ async def free_text_like(
     message: Message, text: str, db: Database, user: UserSettings, now: dt.datetime
 ) -> None:
     """Разбор строки так же, как обычного сообщения — общий путь для голоса."""
+    # «пробег 203116» разбираем первым: иначе это станет тратой в двести тысяч
+    if await try_mileage(message, text, db, user, now.date()):
+        text = strip_mileage(text)
+        if not any(char.isdigit() for char in text):
+            return
+
     current = user.section if user.section in SECTION_MODULES else sections.DEFAULT
 
     # В разделе английского обычный текст — это чаще всего слово из игры или

@@ -29,7 +29,7 @@ from .formatting import duration
 from .handlers.update import RESTART_NOTICE
 from .heartbeat import Heartbeat
 from .journal import Counter, JournalMiddleware
-from .middlewares import UserMiddleware, now_for
+from .middlewares import AccessMiddleware, UserMiddleware, now_for
 from .netlog import install as install_netlog
 from .reminders import ReminderScheduler, next_fire, wait_text
 from .updater import RESTART_CODE, UpdateWatcher, Updater
@@ -51,6 +51,7 @@ COMMANDS = [
     BotCommand(command="remind", description="Напоминания"),
     BotCommand(command="limit", description="Лимит на месяц"),
     BotCommand(command="update", description="Обновить бота"),
+    BotCommand(command="car", description="Пробег: сводка по машине"),
     BotCommand(command="import", description="Загрузить операции файлом"),
     BotCommand(command="commands", description="Список всех команд"),
 ]
@@ -88,9 +89,11 @@ async def run() -> int:
 
     counter = Counter()
     journal = JournalMiddleware(counter)
+    access = AccessMiddleware(config.allowed_users)
     middleware = UserMiddleware()
     for observer in (dispatcher.message, dispatcher.callback_query):
         observer.middleware(journal)  # первым: он же считает, сколько всё заняло
+        observer.middleware(access)  # затем: чужого дальше пускать незачем
         observer.middleware(middleware)
     dispatcher.include_router(build_router())
 
@@ -249,6 +252,13 @@ async def collect_startup(
             "matplotlib на месте" if charts.available() else "нет matplotlib: pip install matplotlib",
         ),
         ("Голос", transcriber.ready, "whisper.cpp на месте" if transcriber.ready else "выключен"),
+        (
+            "Доступ",
+            True,
+            f"только свои · {len(config.allowed_users)} в списке"
+            if config.allowed_users
+            else "только хозяин бота",
+        ),
         (
             "Через прокси",
             bool(config.proxy),

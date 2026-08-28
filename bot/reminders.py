@@ -17,6 +17,7 @@ from aiogram.exceptions import TelegramAPIError
 
 from . import prompts, sections
 from .db import Database
+from .car.handlers import entry_actions as car_actions
 from .keyboards import health_prompt, reminder_actions
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,11 @@ REMINDER_TEXTS = {
     ),
 }
 #: У самочувствия текст не постоянный: вопрос выбирается на месте, см. prompts.
+REMINDER_TEXTS[sections.CAR] = (
+    "🚗 <b>Пробег на утро</b>\n\n"
+    "Пришли число с одометра — например <code>203116</code>. "
+    "По разнице видно, сколько выходит в день и во что обходится километр."
+)
 
 SNOOZE_TEXTS = {
     sections.PRESSURE: (
@@ -59,6 +65,9 @@ SNOOZE_TEXTS = {
     ),
     sections.ENGLISH: (
         "⏰ <b>Напоминаю ещё раз</b>\n\nПять минут английского — /eng."
+    ),
+    sections.CAR: (
+        "⏰ <b>Напоминаю ещё раз</b>\n\nПробег: пришли число с одометра."
     ),
 }
 
@@ -173,6 +182,16 @@ class ReminderScheduler:
                 sent += await self._ask_health(candidate.user_id, candidate.at, now_utc)
                 continue
 
+            if candidate.topic == sections.CAR:
+                last = await self._db.last_reading(candidate.user_id)
+                sent += await self._send(
+                    candidate.user_id,
+                    REMINDER_TEXTS[sections.CAR],
+                    sections.CAR,
+                    car_actions(last.km if last else 0),
+                )
+                continue
+
             text = REMINDER_TEXTS.get(candidate.topic, REMINDER_TEXTS[sections.PRESSURE])
             sent += await self._send(candidate.user_id, text, candidate.topic)
 
@@ -207,6 +226,8 @@ class ReminderScheduler:
             return await self._db.has_transaction_on(candidate.user_id, now.date())
         if candidate.topic == sections.ENGLISH:
             return await self._db.eng_practiced_since(candidate.user_id, now.date())
+        if candidate.topic == sections.CAR:
+            return await self._db.reading_on(candidate.user_id, now.date()) is not None
         return False
 
     async def _send(

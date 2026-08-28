@@ -19,6 +19,9 @@ ENGLISH = "english"
 #: и открывать; смысл как раз в том, чтобы показатели набирались по дороге.
 HEALTH = "health"
 
+#: Ещё одна тема без раздела: утренний пробег.
+CAR = "car"
+
 
 @dataclass(frozen=True)
 class Section:
@@ -60,8 +63,15 @@ HEALTH_TOPIC = Section(
     hint="сон, шаги, пульс покоя — одним нажатием",
 )
 
+CAR_TOPIC = Section(
+    key=CAR,
+    title="Пробег",
+    icon="🚗",
+    hint="число с одометра по утрам",
+)
+
 #: Всё, к чему может быть привязано напоминание: разделы и темы без раздела.
-TOPICS: tuple[Section, ...] = (*SECTIONS, HEALTH_TOPIC)
+TOPICS: tuple[Section, ...] = (*SECTIONS, HEALTH_TOPIC, CAR_TOPIC)
 
 BY_KEY = {section.key: section for section in SECTIONS}
 TOPICS_BY_KEY = {section.key: section for section in TOPICS}
