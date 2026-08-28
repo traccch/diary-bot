@@ -55,6 +55,45 @@ STEP_SHORT: dict[str, str] = {
 #: Куда сообщать о ходе дела. None — молча, как раньше.
 Progress = Optional[Callable[[str], Awaitable[None]]]
 
+#: Куда кладём полный отчёт о несошедшихся тестах.
+TEST_REPORT = "last-tests.log"
+
+#: Строки, по которым видно, что именно не сошлось.
+_FAILED_TEST = re.compile(r"^(FAIL|ERROR): (.+)$")
+_ASSERT = re.compile(r"^(\w*(?:Error|Exception)): (.*)$")
+
+
+def summarize_failures(output: str) -> str:
+    """Выжимка отчёта: какие тесты не сошлись и на чём.
+
+    В сообщение помещается несколько строк, а хвост вывода — это счётчики и
+    слово FAILED, из которых ничего не следует. Имя теста и текст проверки
+    говорят всё.
+    """
+    names: list[str] = []
+    reasons: list[str] = []
+    for line in output.splitlines():
+        found = _FAILED_TEST.match(line.strip())
+        if found:
+            name = found.group(2)
+            # «test_x (tests.mod.Class.test_x)» — в скобках то же самое, но полнее
+            if "(" in name:
+                name = name.split("(", 1)[1].rstrip(") ")
+            names.append(f"{found.group(1)}: <code>{name}</code>")
+            continue
+        broke = _ASSERT.match(line.strip())
+        if broke:
+            reasons.append(line.strip()[:160])
+
+    lines = names[:6]
+    if len(names) > 6:
+        lines.append(f"…и ещё {len(names) - 6}")
+    lines.extend(reasons[:4])
+    if not lines:
+        lines = output.strip().splitlines()[-6:]
+    return "\n".join(lines)
+
+
 #: Больше процессов не помогает: тесты упираются в запуск самого питона.
 MAX_TEST_WORKERS = 4
 
@@ -383,14 +422,21 @@ class Updater:
             return_exceptions=True,
         )
 
-        failures: list[str] = []
+        whole: list[str] = []
+        broken = False
         for result in results:
             if isinstance(result, BaseException):
                 raise result
             code, output = result
-            if code != 0:
-                failures.extend(output.strip().splitlines()[-6:])
-        return not failures, "\n".join(failures[-8:])
+            whole.append(output)
+            broken = broken or code != 0
+
+        report = "\n\n".join(whole)
+        if not broken:
+            return True, ""
+
+        self._save_report(report)
+        return False, summarize_failures(report)
 
     async def _run_tests_in_one_go(self) -> tuple[bool, str]:
         code, output = await run_command(
@@ -399,8 +445,19 @@ class Updater:
             TESTS_TIMEOUT,
             low_priority=True,
         )
-        tail = output.strip().splitlines()
-        return code == 0, "\n".join(tail[-6:])
+        if code == 0:
+            return True, ""
+        self._save_report(output)
+        return False, summarize_failures(output)
+
+    def _save_report(self, report: str) -> None:
+        """Кладёт полный отчёт рядом с журналом: в сообщение он не влезет."""
+        try:
+            path = self.root / "data" / TEST_REPORT
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(report, encoding="utf-8")
+        except OSError:
+            logger.debug("Не смог сохранить отчёт о тестах", exc_info=True)
 
     async def apply(
         self, run_tests: bool = True, progress: Progress = None

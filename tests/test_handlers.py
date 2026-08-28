@@ -172,6 +172,26 @@ def make_message(text: str, message_id: int = 1) -> Message:
 class BotTestCase(unittest.IsolatedAsyncioTestCase):
     """Общая обвязка: своя база, общий диспетчер, бот-заглушка."""
 
+    #: Часовой пояс, в котором живёт подопытный дневник.
+    TZ = "Europe/Moscow"
+
+    def today(self) -> dt.date:
+        """Сегодня — по календарю бота, а не машины, на которой идут тесты.
+
+        Машина может стоять в UTC, а дневник жить в Москве или Красноярске:
+        в полночь по одному календарю другой ещё вчерашний, и тест разваливался
+        бы раз в сутки на пару часов — на чужой машине и, конечно, не у меня.
+        """
+        from bot.middlewares import now_for
+
+        return now_for(self.TZ).date()
+
+    def now(self) -> dt.datetime:
+        """То же про время: часы бота, а не машины."""
+        from bot.middlewares import now_for
+
+        return now_for(self.TZ)
+
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db = memory_db()
@@ -462,7 +482,7 @@ class HandlersTest(BotTestCase):
         self.assertIn("7 ч 40 мин", answer)
         self.assertIn("23:21", answer)
 
-        stored = await self.db.get_metric(USER_ID, "sleep", dt.date.today())
+        stored = await self.db.get_metric(USER_ID, "sleep", self.today())
         self.assertEqual(stored.value, 460)
 
     async def test_metrics_without_pressure(self):
@@ -477,7 +497,7 @@ class HandlersTest(BotTestCase):
         await self.send("вес 78,5")
         await self.send("вес 78,2")
         stored = await self.db.metrics_between(
-            USER_ID, "weight", dt.date.today(), dt.date.today()
+            USER_ID, "weight", self.today(), self.today()
         )
         self.assertEqual([item.value for item in stored], [78.2])
 
@@ -487,7 +507,7 @@ class HandlersTest(BotTestCase):
 
     async def test_health_block_appears_in_stats(self):
         for offset in range(12):
-            date = dt.date.today() - dt.timedelta(days=offset)
+            date = self.today() - dt.timedelta(days=offset)
             await self.db.set_metric(USER_ID, "sleep", date, 330 if offset % 2 else 480)
             await self.db.add_measurement(
                 USER_ID,
@@ -503,7 +523,7 @@ class HandlersTest(BotTestCase):
     async def test_metric_chart(self):
         for offset in range(6):
             await self.db.set_metric(
-                USER_ID, "steps", dt.date.today() - dt.timedelta(days=offset), 6000 + offset * 500
+                USER_ID, "steps", self.today() - dt.timedelta(days=offset), 6000 + offset * 500
             )
         await self.click("chart:steps:month")
         self.assertEqual(len(self.bot.photos()), 1)
@@ -865,7 +885,7 @@ class EnglishTest(BotTestCase):
         progress = await self.db.eng_progress(USER_ID)
         self.assertEqual(len(progress), 1, "ответ должен быть записан сразу")
 
-        day = await self.db.eng_day(USER_ID, dt.date.today())
+        day = await self.db.eng_day(USER_ID, self.today())
         self.assertEqual(day.answered, 1)
 
     async def test_session_walks_to_the_end(self):
@@ -888,7 +908,7 @@ class EnglishTest(BotTestCase):
 
         await self.db.ensure_user(USER_ID)
         await self.db.eng_save_answer(
-            USER_ID, "games:loot", 3, dt.date.today(), True, False
+            USER_ID, "games:loot", 3, self.today(), True, False
         )
 
         await self.send("/eng")
@@ -964,3 +984,26 @@ class EnglishTest(BotTestCase):
         await self.to_english()
         await self.send("/stats")
         self.assertIn("Английский", self.bot.texts[-1])
+
+
+class ClockDisciplineTest(unittest.TestCase):
+    """Тесты не должны спрашивать дату у машины.
+
+    Бот живёт по часовому поясу пользователя, машина — по своему. В час, когда
+    календари расходятся, такой тест разваливается: у автора всё зелено, а у
+    владельца бота обновления перестают вставать.
+    """
+
+    def test_no_machine_dates_in_tests(self):
+        from pathlib import Path
+
+        folder = Path(__file__).resolve().parent
+        offenders = []
+        for path in sorted(folder.glob("test_*.py")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "date.today()" in line and "def today" not in line:
+                    offenders.append(f"{path.name}:{number}")
+
+        self.assertEqual(
+            offenders, [], "берите дату из self.today(), а не у машины: " + ", ".join(offenders)
+        )

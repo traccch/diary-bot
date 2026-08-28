@@ -125,9 +125,7 @@ class CarFlowTest(BotTestCase):
         self.assertEqual(transaction.amount, 199900)
 
     async def test_distance_since_yesterday(self):
-        from bot.middlewares import now_for
-
-        today = now_for("Europe/Moscow").date()
+        today = self.today()
         await self.db.set_reading(USER_ID, today - dt.timedelta(days=1), 203000)
 
         await self.send("пробег 203100")
@@ -135,17 +133,13 @@ class CarFlowTest(BotTestCase):
         self.assertIn("100 км", self.said())
 
     async def test_lower_reading_is_questioned(self):
-        from bot.middlewares import now_for
-
-        today = now_for("Europe/Moscow").date()
+        today = self.today()
         await self.db.set_reading(USER_ID, today - dt.timedelta(days=1), 203000)
         await self.send("пробег 202000")
         self.assertIn("больше", self.said())
 
     async def test_did_not_drive_button(self):
-        from bot.middlewares import now_for
-
-        today = now_for("Europe/Moscow").date()
+        today = self.today()
         await self.db.set_reading(USER_ID, today - dt.timedelta(days=1), 203000)
 
         await self.click("car:same")
@@ -201,9 +195,7 @@ class FuelFlowTest(BotTestCase):
 
     async def test_litres_are_not_a_date_and_not_a_price(self):
         """«-833 заправка 13.2л» — это 833 ₽ за 13,2 л, а не 13 февраля."""
-        from bot.middlewares import now_for
-
-        today = now_for("Europe/Moscow").date()
+        today = self.today()
         await self.send("-833 заправка 13.2л")
 
         transaction = (await self.db.last_transactions(USER_ID))[0]
@@ -216,18 +208,14 @@ class FuelFlowTest(BotTestCase):
         self.assertIn("13,2 л", self.said())
         self.assertIn("63", self.said())  # 833 / 13,2 ≈ 63 ₽ за литр
 
-        from bot.middlewares import now_for
-
-        today = now_for("Europe/Moscow").date()
+        today = self.today()
         fills = await self.db.fuel_between(USER_ID, today, today)
         self.assertEqual(len(fills), 1)
         self.assertAlmostEqual(fills[0].litres, 13.2)
 
     async def test_plain_purchase_is_not_a_fill(self):
         await self.send("молоко 2л 120")
-        from bot.middlewares import now_for
-
-        today = now_for("Europe/Moscow").date()
+        today = self.today()
         self.assertEqual(await self.db.fuel_between(USER_ID, today, today), [])
 
     async def test_consumption_needs_two_fills(self):

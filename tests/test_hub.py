@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
-
 from bot import sections
 
 from .test_handlers import USER_ID, BotTestCase
@@ -125,8 +123,3 @@ class HubTest(BotTestCase):
     async def test_update_from_the_menu(self):
         await self.click("do:set:update")
         self.assertIn("версия", self.bot.texts[-1].lower())
-
-    def today(self) -> dt.date:
-        from bot.middlewares import now_for
-
-        return now_for("Europe/Moscow").date()

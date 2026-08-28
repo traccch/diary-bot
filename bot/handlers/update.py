@@ -13,7 +13,7 @@ from typing import Optional
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from ..db import Database
@@ -182,6 +182,36 @@ class ProgressReport:
         self._shown = text
 
 
+async def force_update(
+    message: Message,
+    db: Database,
+    updater: Updater,
+    restart_event: Optional[asyncio.Event] = None,
+) -> None:
+    """Обновление без тестов — когда тесты сами и мешают.
+
+    Обычно откат на красных тестах спасает. Но если не сходится сам тест — не
+    код, а проверка, — обновления перестают приезжать вовсе, и починка тоже.
+    Решение оставляем человеку и говорим прямо, чем он рискует.
+    """
+    report = ProgressReport(message)
+    await report.start()
+    try:
+        result = await updater.apply(run_tests=False, progress=report)
+    except Exception:  # noqa: BLE001
+        logger.exception("Обновление без тестов сорвалось")
+        await report.finish("⚠️ Не вышло. Бот работает как работал.")
+        return
+
+    await report.finish(
+        ("✅ " if result.ok else "⚠️ ") + result.message + "\n<i>Тесты не гонял.</i>"
+    )
+    if result.restart and restart_event is not None:
+        await db.set_meta("notified_commit", "")
+        await db.set_meta(RESTART_NOTICE, f"{message.chat.id}|{time.time():.0f}")
+        restart_event.set()
+
+
 async def is_owner(db: Database, owner_id: Optional[int], user_id: int) -> bool:
     """Владелец — тот, кто указан в .env, иначе первый написавший боту."""
     if owner_id is not None:
@@ -213,13 +243,19 @@ def render_status(status) -> str:
 @router.message(Command("version", "update"))
 async def cmd_update(
     message: Message,
+    command: CommandObject,
     db: Database,
     updater: Updater,
+    restart_event: Optional[asyncio.Event] = None,
     owner_id: Optional[int] = None,
 ) -> None:
     user_id = message.from_user.id if message.from_user else 0
     if not await is_owner(db, owner_id, user_id):
         await message.answer(NOT_OWNER)
+        return
+
+    if (command.args or "").strip().lower() in {"force", "сила", "без тестов"}:
+        await force_update(message, db, updater, restart_event)
         return
 
     try:
@@ -229,7 +265,13 @@ async def cmd_update(
         return
 
     await message.answer(
-        render_status(status),
+        render_status(status)
+        + (
+            "\n\n<i>Если тесты не сходятся сами по себе — <code>/update force</code> "
+            "поставит без них.</i>"
+            if status.available
+            else ""
+        ),
         reply_markup=update_actions() if status.available else None,
     )
 

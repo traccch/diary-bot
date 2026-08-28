@@ -21,7 +21,7 @@ from .. import sysinfo
 from ..db import Database, UserSettings
 from ..formatting import esc
 from ..reminders import next_fire, wait_text
-from ..updater import Updater
+from ..updater import TEST_REPORT, Updater
 from .update import RESTART_NOTICE
 
 router = Router(name="status")
@@ -209,6 +209,19 @@ async def cmd_log(message: Message, config_log_path: str = "") -> None:
             "<i>Последние события: запуск, сообщения, обрывы связи, обновления.</i>"
         ),
     )
+
+    # отчёт о несошедшихся тестах — самое нужное, когда обновления не встают
+    report = os.path.join(os.path.dirname(path) or ".", TEST_REPORT)
+    try:
+        with open(report, "rb") as handle:
+            content = handle.read()[-LOG_TAIL_BYTES:]
+    except OSError:
+        return
+    if content.strip():
+        await message.answer_document(
+            BufferedInputFile(content, filename=f"tests-{stamp}.log"),
+            caption="🧪 Последний неудачный прогон тестов",
+        )
 
 
 @router.message(Command("voice", "golos"))

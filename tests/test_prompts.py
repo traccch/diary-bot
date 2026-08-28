@@ -14,7 +14,6 @@ from .support import memory_db
 
 from .test_handlers import USER_ID, BotTestCase
 
-USER_ID = 777
 MONDAY = dt.date(2026, 8, 17)
 MORNING = dt.time(9, 30)
 EVENING = dt.time(22, 0)
@@ -164,11 +163,6 @@ class HealthButtonsTest(BotTestCase):
         await self.click("hm:steps:миллион")
         self.assertEqual(await self.db.count_metrics(USER_ID), 0)
 
-    def today(self) -> dt.date:
-        from bot.middlewares import now_for
-
-        return now_for("Europe/Moscow").date()
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -177,18 +171,11 @@ if __name__ == "__main__":
 class BareNumberAnswerTest(BotTestCase):
     """Бот спросил про шаги — «5182» должно быть ответом, а не загадкой."""
 
-    def today(self) -> dt.date:
-        from bot.middlewares import now_for
-
-        return now_for("Europe/Moscow").date()
-
     async def ask(self, kind: str) -> None:
         from bot import pending
-        from bot.middlewares import now_for
-
         await self.db.ensure_user(USER_ID)
         await self.db.set_meta(
-            pending.key(USER_ID), pending.remember(kind, now_for("Europe/Moscow"))
+            pending.key(USER_ID), pending.remember(kind, self.now())
         )
 
     async def test_steps_are_recorded(self):
@@ -209,9 +196,7 @@ class BareNumberAnswerTest(BotTestCase):
 
     async def test_old_question_does_not_catch_numbers(self):
         from bot import pending
-        from bot.middlewares import now_for
-
-        stale = now_for("Europe/Moscow") - dt.timedelta(hours=5)
+        stale = self.now() - dt.timedelta(hours=5)
         await self.db.ensure_user(USER_ID)
         await self.db.set_meta(pending.key(USER_ID), pending.remember("steps", stale))
 
