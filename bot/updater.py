@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,10 +61,21 @@ class UpdateStatus:
     remote: str
     behind: int
     messages: list[str] = field(default_factory=list)
+    #: Человеческие имена версий: «v1.2» вместо «317436e». Пусто — тегов нет.
+    local_name: str = ""
+    remote_name: str = ""
 
     @property
     def available(self) -> bool:
         return self.behind > 0
+
+    @property
+    def here(self) -> str:
+        return self.local_name or self.local
+
+    @property
+    def there(self) -> str:
+        return self.remote_name or self.remote
 
 
 @dataclass(frozen=True)
@@ -115,6 +127,18 @@ async def _step(progress: Progress, step: str) -> None:
         logger.debug("Не смог сообщить о шаге %s", step, exc_info=True)
 
 
+#: «v1.2-3-gabc1234» — это «три коммита после v1.2», но читать это невозможно.
+_DESCRIBE = re.compile(r"^(?P<tag>.+?)-(?P<ahead>\d+)-g[0-9a-f]{4,}$")
+
+
+def pretty_version(raw: str) -> str:
+    """Приводит вывод git describe к человеческому виду: v1.2+3."""
+    match = _DESCRIBE.match(raw.strip())
+    if not match:
+        return raw.strip()
+    return f"{match.group('tag')}+{match.group('ahead')}"
+
+
 class Updater:
     def __init__(self, root: Optional[Path] = None, python: Optional[str] = None) -> None:
         self.root = root or Path(__file__).resolve().parent.parent
@@ -136,6 +160,18 @@ class Updater:
 
     async def commit(self, ref: str = "HEAD") -> str:
         return await self._git("rev-parse", "--short", ref)
+
+    async def version(self, ref: str = "HEAD") -> str:
+        """Имя версии по тегам. Пусто, если тегов в репозитории нет вовсе.
+
+        Тег — это то, что человек может назвать вслух и запомнить; хеш он
+        может только сверить. Поэтому «v1.2 → v1.3», а хеши остаются
+        запасным вариантом на случай репозитория без тегов.
+        """
+        code, output = await run_command(
+            ["git", "describe", "--tags", "--abbrev=7", ref], self.root, GIT_TIMEOUT
+        )
+        return pretty_version(output) if code == 0 else ""
 
     async def is_dirty(self) -> bool:
         """Есть ли незакоммиченные правки — тогда обновляться опасно."""
@@ -162,6 +198,10 @@ class Updater:
             raise
 
         upstream = f"origin/{branch}"
+        # теги тянем отдельно: без них не из чего собрать имя версии
+        await run_command(
+            ["git", "fetch", "--quiet", "--tags", "origin"], self.root, GIT_TIMEOUT
+        )
         behind_raw = await self._git("rev-list", "--count", f"HEAD..{upstream}")
         messages = await self._git("log", "--format=%s", f"HEAD..{upstream}")
 
@@ -171,6 +211,8 @@ class Updater:
             remote=await self.commit(upstream),
             behind=int(behind_raw or 0),
             messages=[line for line in messages.splitlines() if line.strip()],
+            local_name=await self.version(),
+            remote_name=await self.version(upstream),
         )
 
     # ------------------------------------------------------------ обновление
@@ -242,10 +284,11 @@ class Updater:
                 )
 
         await _step(progress, RESTART)
-        after = await self.commit()
+        # именами версий, а не хешами: их человек и увидит в сообщении
+        was, now = status.here, await self.version() or await self.commit()
         return UpdateResult(
             True,
-            f"Обновился: <code>{before}</code> → <code>{after}</code> "
+            f"Обновился: <code>{was}</code> → <code>{now}</code> "
             f"({status.behind} "
             + plural(status.behind, "коммит", "коммита", "коммитов")
             + "). Перезапускаюсь.",

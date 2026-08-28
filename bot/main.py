@@ -167,7 +167,7 @@ async def collect_startup(
     if updater.is_git_repo():
         try:
             info.branch = await updater.branch()
-            info.commit = await updater.commit()
+            info.commit = await updater.version() or await updater.commit()
         except Exception:  # noqa: BLE001 - git мог быть не настроен
             logger.debug("Не смог узнать версию", exc_info=True)
 

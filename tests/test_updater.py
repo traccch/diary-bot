@@ -99,8 +99,33 @@ class UpdaterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             status.messages, ["Добавил график веса", "Починил разбор сна"]
         )
-        self.assertIn("Есть обновление", render_status(status))
+        self.assertIn("Обновление до", render_status(status))
         self.assertIn("Добавил график веса", render_status(status))
+
+    async def test_versions_are_named_by_tags(self):
+        """Тег человек может назвать вслух, хеш — только сверить."""
+        git(self.origin, "tag", "v1.0")
+        self.commit_upstream("Починил разбор сна")
+        git(self.origin, "tag", "v1.1")
+
+        status = await self.updater.check()
+        self.assertEqual(status.there, "v1.1")
+        text = render_status(status)
+        self.assertIn("Обновление до v1.1", text)
+
+    async def test_commits_after_a_tag_are_counted(self):
+        git(self.origin, "tag", "v1.0")
+        self.commit_upstream("Мелкая правка")
+        self.commit_upstream("Ещё одна")
+
+        status = await self.updater.check()
+        self.assertEqual(status.there, "v1.0+2")
+
+    async def test_without_tags_hashes_still_work(self):
+        self.commit_upstream("Починил разбор сна")
+        status = await self.updater.check()
+        self.assertEqual(status.there, status.remote)
+        self.assertIn("Обновление до", render_status(status))
 
     async def test_renamed_branch_is_explained(self):
         """Ветку переименовали на сервере — git ругается невнятно, бот объясняет."""

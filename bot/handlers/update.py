@@ -117,14 +117,15 @@ async def is_owner(db: Database, owner_id: Optional[int], user_id: int) -> bool:
 def render_status(status) -> str:
     if not status.available:
         return (
-            f"✅ <b>Последняя версия</b>\n"
-            f"<code>{esc(status.local)}</code> · ветка {esc(status.branch)}"
+            f"✅ <b>Последняя версия</b>: <code>{esc(status.here)}</code>\n"
+            f"<i>ветка {esc(status.branch)}</i>"
         )
 
     lines = [
-        f"🆕 <b>Есть обновление</b>: {status.behind} "
+        f"🆕 <b>Обновление до {esc(status.there)}</b>",
+        f"<code>{esc(status.here)}</code> → <code>{esc(status.there)}</code> · "
+        + f"{status.behind} "
         + plural(status.behind, "коммит", "коммита", "коммитов"),
-        f"<code>{esc(status.local)}</code> → <code>{esc(status.remote)}</code>",
         "",
     ]
     lines.extend(f"· {esc(message)}" for message in status.messages[:10])

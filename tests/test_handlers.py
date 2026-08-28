@@ -580,7 +580,7 @@ class HandlersTest(BotTestCase):
             messages=["Починил разбор сна", "Добавил график веса"],
         )
         answer = await self.send("/update")
-        self.assertIn("Есть обновление", answer)
+        self.assertIn("Обновление до", answer)
         self.assertIn("Починил разбор сна", answer)
 
         await self.click("upd:apply")
