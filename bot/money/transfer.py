@@ -53,13 +53,27 @@ class Row:
 
 
 @dataclass(frozen=True)
+class Recategorize:
+    """Операция уже записана, но файл кладёт её в другую категорию."""
+
+    transaction_id: int
+    kind: str
+    was: str
+    becomes: str
+    note: str
+    happened_on: dt.date
+
+
+@dataclass(frozen=True)
 class Plan:
     rows: tuple[Row, ...]
     skipped: int
     duplicates: int
+    #: Уже записанное, чему файл меняет категорию.
+    fixes: tuple[Recategorize, ...] = ()
 
     def __bool__(self) -> bool:
-        return bool(self.rows)
+        return bool(self.rows) or bool(self.fixes)
 
     @property
     def income(self) -> int:
@@ -143,11 +157,13 @@ def parse(
     if len(items) > MAX_ROWS:
         raise ImportError_(f"Слишком много записей: {len(items)}, максимум {MAX_ROWS}")
 
-    seen = {
-        _key(item.happened_on, item.kind, item.amount, item.note) for item in existing
+    known = {
+        _key(item.happened_on, item.kind, item.amount, item.note): item
+        for item in existing
     }
 
     rows: list[Row] = []
+    fixes: list[Recategorize] = []
     skipped = 0
     duplicates = 0
 
@@ -171,10 +187,33 @@ def parse(
 
         row = Row(day, kind, abs(minor), note, category)
         key = _key(row.happened_on, row.kind, row.amount, row.note)
-        if key in seen:
-            duplicates += 1
+        if key in known:
+            # Такая операция уже есть. Заново её не пишем, но если файл кладёт
+            # её в другую категорию — это правка, а не дубль: значит, человек
+            # разобрал свои записи и вернул их боту.
+            current = known[key]
+            if (
+                current is not None
+                and row.category
+                and row.category.lower().replace("ё", "е")
+                != current.category_name.lower().replace("ё", "е")
+            ):
+                fixes.append(
+                    Recategorize(
+                        current.id,
+                        current.kind,
+                        current.category_name,
+                        row.category,
+                        row.note,
+                        row.happened_on,
+                    )
+                )
+            else:
+                duplicates += 1
             continue
-        seen.add(key)
+        # одинаковые строки внутри одного файла — тоже дубли, но правки им
+        # предлагать уже не из чего
+        known[key] = None
         rows.append(row)
 
-    return Plan(tuple(rows), skipped, duplicates)
+    return Plan(tuple(rows), skipped, duplicates, tuple(fixes))

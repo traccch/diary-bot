@@ -37,17 +37,27 @@ HOW_TO = (
     "или впиши её прямо: <code>\"category\": \"Продукты\"</code>.\n\n"
     "<i>Такой файл может собрать и любой ИИ: покажи ему свои записи и попроси "
     "перевести в этот формат. Я покажу, что получилось, и запишу только после "
-    "твоего подтверждения. Уже записанное не задвоится.</i>"
+    "твоего подтверждения. Уже записанное не задвоится.</i>\n\n"
+    "<b>Тот же файл можно прислать повторно</b> — например, разобрав категории. "
+    "Операции не задвоятся: у совпадающих я просто поправлю категорию и покажу, "
+    "что именно меняю."
 )
 
 
-def confirm_import(count: int) -> InlineKeyboardMarkup:
-    word = plural(count, "операцию", "операции", "операций")
+def confirm_import(plan: transfer.Plan) -> InlineKeyboardMarkup:
+    parts = []
+    if plan.rows:
+        parts.append(
+            f"записать {len(plan.rows)} "
+            + plural(len(plan.rows), "операцию", "операции", "операций")
+        )
+    if plan.fixes:
+        parts.append(f"поправить {len(plan.fixes)}")
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"✅ Записать {count} {word}", callback_data="imp:apply"
+                    text="✅ " + " и ".join(parts).capitalize(), callback_data="imp:apply"
                 )
             ],
             [InlineKeyboardButton(text="Отмена", callback_data="imp:cancel")],
@@ -55,7 +65,33 @@ def confirm_import(count: int) -> InlineKeyboardMarkup:
     )
 
 
+def fixes_block(plan: transfer.Plan) -> list[str]:
+    """Что бот собирается переложить из категории в категорию."""
+    if not plan.fixes:
+        return []
+    lines = [
+        f"✏️ <b>Поправлю категорию у {len(plan.fixes)} </b>"
+        + plural(len(plan.fixes), "операции", "операций", "операций"),
+        "",
+    ]
+    for fix in plan.fixes[:PREVIEW_LIMIT]:
+        lines.append(
+            f"{fix.happened_on:%d.%m} {esc(fix.note or '—')}: "
+            f"{esc(fix.was)} → <b>{esc(fix.becomes)}</b>"
+        )
+    if len(plan.fixes) > PREVIEW_LIMIT:
+        lines.append(f"<i>…и ещё {len(plan.fixes) - PREVIEW_LIMIT}</i>")
+    return lines
+
+
 def preview(plan: transfer.Plan, currency: str) -> str:
+    if not plan.rows:
+        # в файле одни правки — про суммы и периоды говорить нечего
+        return "\n".join(
+            fixes_block(plan)
+            + ([f"<i>Остальное уже записано: {plan.duplicates}.</i>"] if plan.duplicates else [])
+        )
+
     period = plan.period
     lines = [f"📥 <b>Нашёл {len(plan.rows)} "
              + plural(len(plan.rows), "операцию", "операции", "операций") + "</b>"]
@@ -90,6 +126,10 @@ def preview(plan: transfer.Plan, currency: str) -> str:
     if len(plan.rows) > PREVIEW_LIMIT:
         hidden = len(plan.rows) - PREVIEW_LIMIT
         lines.append(f"<i>…и ещё {hidden}</i>")
+
+    if plan.fixes:
+        lines.append("")
+        lines.extend(fixes_block(plan))
     return "\n".join(lines)
 
 
@@ -158,9 +198,7 @@ async def handle_document(
         return
 
     await state.update_data(import_file_id=document.file_id)
-    await message.answer(
-        preview(plan, user.currency), reply_markup=confirm_import(len(plan.rows))
-    )
+    await message.answer(preview(plan, user.currency), reply_markup=confirm_import(plan))
 
 
 @router.callback_query(F.data == "imp:cancel")
@@ -193,6 +231,18 @@ async def cb_apply(
         await callback.answer(str(exc)[:180], show_alert=True)
         return
 
+    fixed = 0
+    for fix in plan.fixes:
+        # категория должна быть того же вида: «Долги» есть и в расходах,
+        # и в доходах, и это разные категории
+        category = await db.find_category_by_name(user.user_id, fix.becomes, fix.kind)
+        if category is None:
+            continue
+        fixed += int(
+            await db.set_transaction_category(user.user_id, fix.transaction_id, category.id)
+            is not None
+        )
+
     written = 0
     for row in plan.rows:
         categories = await db.list_categories(user.user_id, row.kind)
@@ -212,9 +262,16 @@ async def cb_apply(
     await state.update_data(import_file_id=None)
     await callback.answer("Готово")
     if isinstance(callback.message, Message):
+        done = []
+        if written:
+            done.append(
+                f"записал {written} "
+                + plural(written, "операцию", "операции", "операций")
+            )
+        if fixed:
+            done.append(f"поправил категорию у {fixed}")
         await callback.message.edit_text(
-            f"✅ Записал {written} "
-            + plural(written, "операцию", "операции", "операций")
+            "✅ " + (", ".join(done).capitalize() or "Ничего не изменилось")
             + ".\nПосмотреть — /stats или /balance.",
             reply_markup=None,
         )

@@ -142,6 +142,60 @@ class ImportFlowTest(BotTestCase):
         self.assertIn("уже есть", self.bot.texts[-1])
         self.assertEqual(await self.db.count_transactions(USER_ID), 2)
 
+    async def test_same_file_with_categories_fixes_them(self):
+        """Файл, присланный второй раз, — это правка, а не дубль."""
+        await self.send_document(payload({"date": "2026-08-11", "amount": -2080,
+                                          "note": "электроэнергия, долг за три месяца"}))
+        await self.click("imp:apply")
+        stored = (await self.db.last_transactions(USER_ID))[0]
+        self.assertEqual(stored.category_name, "Долги")  # заметка обманула
+
+        await self.send_document(payload({"date": "2026-08-11", "amount": -2080,
+                                          "note": "электроэнергия, долг за три месяца",
+                                          "category": "Жильё"}))
+        preview = self.bot.texts[-1]
+        self.assertIn("Поправлю категорию", preview)
+        self.assertIn("Долги → <b>Жильё</b>", preview)
+
+        await self.click("imp:apply")
+        self.assertIn("поправил категорию у 1", self.bot.edits[-1].lower())
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)  # не задвоилось
+        fixed = (await self.db.last_transactions(USER_ID))[0]
+        self.assertEqual(fixed.category_name, "Жильё")
+
+    async def test_same_category_is_still_a_duplicate(self):
+        rows = ({"date": "2026-08-11", "amount": -661, "note": "продукты",
+                 "category": "Продукты"},)
+        await self.send_document(payload(*rows))
+        await self.click("imp:apply")
+
+        await self.send_document(payload(*rows))
+        self.assertIn("уже есть", self.bot.texts[-1])
+
+    async def test_repeated_rows_inside_one_file(self):
+        """Две одинаковые строки в файле — это одна операция, а не правка."""
+        row = {"date": "2026-08-11", "amount": -661, "note": "продукты",
+               "category": "Продукты"}
+        await self.send_document(payload(row, row))
+        await self.click("imp:apply")
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)
+
+    async def test_fix_keeps_the_kind(self):
+        """«Долги» есть и в расходах, и в доходах — это разные категории."""
+        await self.send_document(payload({"date": "2026-08-25", "amount": 1000,
+                                          "note": "займ у мамы", "category": "Прочее"}))
+        await self.click("imp:apply")
+
+        await self.send_document(payload({"date": "2026-08-25", "amount": 1000,
+                                          "note": "займ у мамы", "category": "Долги"}))
+        await self.click("imp:apply")
+
+        fixed = (await self.db.last_transactions(USER_ID))[0]
+        self.assertEqual(fixed.category_name, "Долги")
+        self.assertTrue(fixed.is_income)
+        category = await self.db.get_category(USER_ID, fixed.category_id)
+        self.assertEqual(category.kind, "income")
+
     async def test_cancel_writes_nothing(self):
         await self.send_document(payload(*ROWS))
         await self.click("imp:cancel")
