@@ -50,6 +50,19 @@ def money_periods(active: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def balance_actions() -> InlineKeyboardMarkup:
+    """Из баланса — в подробную сводку: два числа редко отвечают на всё."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📊 Куда ушло и откуда пришло", callback_data="do:money:stats"
+                )
+            ]
+        ]
+    )
+
+
 def delete_buttons(transactions: Sequence[Transaction]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for transaction in transactions:

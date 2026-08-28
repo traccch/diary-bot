@@ -196,6 +196,46 @@ class ImportFlowTest(BotTestCase):
         category = await self.db.get_category(USER_ID, fixed.category_id)
         self.assertEqual(category.kind, "income")
 
+    async def test_long_list_can_be_unfolded(self):
+        """«…и ещё 38» — плохая концовка для списка, который надо проверить."""
+        many = tuple(
+            {"date": "2026-08-11", "amount": -(100 + i), "note": f"покупка {i}"}
+            for i in range(20)
+        )
+        await self.send_document(payload(*many))
+        self.assertIn("…и ещё", self.bot.texts[-1])
+        self.assertTrue(any("Показать все" in text for text in self.bot.last_buttons))
+
+        before = len(self.bot.texts)
+        await self.click("imp:more")
+        shown = "\n".join(self.bot.texts[before:])
+        self.assertIn("покупка 0", shown)
+        self.assertIn("покупка 19", shown)
+        self.assertNotIn("…и ещё", shown)
+
+    async def test_very_long_list_is_split_into_messages(self):
+        many = tuple(
+            {"date": "2026-08-11", "amount": -(1000 + i),
+             "note": f"довольно длинная заметка про покупку номер {i} в магазине"}
+            for i in range(120)
+        )
+        await self.send_document(payload(*many))
+        before = len(self.bot.texts)
+        await self.click("imp:more")
+
+        parts = self.bot.texts[before:]
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(part) <= 4096 for part in parts))
+
+    async def test_import_opens_the_money_section(self):
+        """Иначе следующая /stats покажет давление, а не траты."""
+        await self.send_document(payload(*ROWS))
+        await self.click("imp:apply")
+
+        user = await self.db.ensure_user(USER_ID)
+        self.assertEqual(user.section, "money")
+        self.assertTrue(any("Сводка" in text for text in self.bot.last_buttons))
+
     async def test_cancel_writes_nothing(self):
         await self.send_document(payload(*ROWS))
         await self.click("imp:cancel")

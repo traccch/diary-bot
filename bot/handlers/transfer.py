@@ -10,6 +10,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from .. import sections
 from ..db import Database, UserSettings
 from ..formatting import esc, format_money, plural
 from ..money import transfer
@@ -44,6 +45,10 @@ HOW_TO = (
 )
 
 
+#: Больше в одно сообщение Telegram не пустит (лимит 4096 знаков).
+CHUNK = 3500
+
+
 def confirm_import(plan: transfer.Plan) -> InlineKeyboardMarkup:
     parts = []
     if plan.rows:
@@ -53,16 +58,64 @@ def confirm_import(plan: transfer.Plan) -> InlineKeyboardMarkup:
         )
     if plan.fixes:
         parts.append(f"поправить {len(plan.fixes)}")
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="✅ " + " и ".join(parts).capitalize(), callback_data="imp:apply"
+            )
+        ]
+    ]
+    hidden = max(0, len(plan.rows) - PREVIEW_LIMIT) + max(0, len(plan.fixes) - PREVIEW_LIMIT)
+    if hidden:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="✅ " + " и ".join(parts).capitalize(), callback_data="imp:apply"
+                    text=f"👁 Показать все ({hidden} скрыто)", callback_data="imp:more"
                 )
-            ],
-            [InlineKeyboardButton(text="Отмена", callback_data="imp:cancel")],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="Отмена", callback_data="imp:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def full_list(plan: transfer.Plan, currency: str) -> list[str]:
+    """Весь список целиком, разбитый на сообщения по длине.
+
+    «…и ещё 38» — плохая концовка для списка, который человек как раз и хочет
+    проверить: правки он подтверждает не глядя только один раз.
+    """
+    lines: list[str] = []
+    if plan.rows:
+        lines.append(f"📥 <b>Записать ({len(plan.rows)})</b>")
+        for row in plan.rows:
+            sign = "+" if row.kind == INCOME else "−"
+            lines.append(
+                f"{row.happened_on:%d.%m} {sign}{format_money(row.amount, currency)}"
+                f" · {esc(row.note or '—')}"
+                + (f" · {esc(row.category)}" if row.category else "")
+            )
+    if plan.fixes:
+        if lines:
+            lines.append("")
+        lines.append(f"✏️ <b>Поправить категорию ({len(plan.fixes)})</b>")
+        for fix in plan.fixes:
+            lines.append(
+                f"{fix.happened_on:%d.%m} {esc(fix.note or '—')}: "
+                f"{esc(fix.was)} → <b>{esc(fix.becomes)}</b>"
+            )
+
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in lines:
+        if size + len(line) > CHUNK and current:
+            chunks.append("\n".join(current))
+            current, size = [], 0
+        current.append(line)
+        size += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
 
 
 def fixes_block(plan: transfer.Plan) -> list[str]:
@@ -201,6 +254,33 @@ async def handle_document(
     await message.answer(preview(plan, user.currency), reply_markup=confirm_import(plan))
 
 
+@router.callback_query(F.data == "imp:more")
+async def cb_more(
+    callback: CallbackQuery,
+    bot: Bot,
+    db: Database,
+    user: UserSettings,
+    now: dt.datetime,
+    state: FSMContext,
+) -> None:
+    file_id = (await state.get_data()).get("import_file_id")
+    message = callback.message
+    if not file_id or not isinstance(message, Message):
+        await callback.answer("Файл потерялся, пришли его заново", show_alert=True)
+        return
+
+    existing = await db.last_transactions(user.user_id, limit=transfer.MAX_ROWS)
+    try:
+        plan = transfer.parse(await _read(bot, file_id), now.date(), existing)
+    except transfer.ImportError_ as exc:
+        await callback.answer(str(exc)[:180], show_alert=True)
+        return
+
+    await callback.answer()
+    for chunk in full_list(plan, user.currency):
+        await message.answer(chunk)
+
+
 @router.callback_query(F.data == "imp:cancel")
 async def cb_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(import_file_id=None)
@@ -260,6 +340,8 @@ async def cb_apply(
         written += 1
 
     await state.update_data(import_file_id=None)
+    # раздел переключаем сразу: иначе следующая /stats покажет давление
+    await db.set_section(user.user_id, sections.MONEY)
     await callback.answer("Готово")
     if isinstance(callback.message, Message):
         done = []
@@ -271,7 +353,17 @@ async def cb_apply(
         if fixed:
             done.append(f"поправил категорию у {fixed}")
         await callback.message.edit_text(
-            "✅ " + (", ".join(done).capitalize() or "Ничего не изменилось")
-            + ".\nПосмотреть — /stats или /balance.",
-            reply_markup=None,
+            "✅ " + (", ".join(done).capitalize() or "Ничего не изменилось") + ".",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📊 Сводка", callback_data="do:money:stats"
+                        ),
+                        InlineKeyboardButton(
+                            text="💼 Баланс", callback_data="do:money:balance"
+                        ),
+                    ]
+                ]
+            ),
         )

@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ...db import Database, UserSettings
-from ..keyboards import money_periods
+from ..keyboards import balance_actions, money_periods
 from ..stats import VALID_PERIODS, balance_text, build_report
 
 router = Router(name="money-reports")
@@ -29,7 +29,7 @@ async def cmd_stats(
 async def cmd_balance(
     message: Message, db: Database, user: UserSettings, today: dt.date
 ) -> None:
-    await message.answer(await balance_text(db, user, today))
+    await message.answer(await balance_text(db, user, today), reply_markup=balance_actions())
 
 
 @router.callback_query(F.data.startswith("mrep:"))
