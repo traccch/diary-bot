@@ -99,6 +99,7 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
             ("🎯 Цель по давлению", "do:set:target"),
             ("🌍 Часовой пояс", "do:set:tz"),
             ("⬇️ Обновить бота", "do:set:update"),
+            ("🖥 Состояние", "do:set:status"),
             ("📖 Все команды", "do:set:help"),
             ("ℹ️ О шкале и границах", "do:set:about"),
         ),
@@ -321,8 +322,10 @@ async def cb_settings(
     callback: CallbackQuery,
     db: Database,
     user: UserSettings,
+    now: dt.datetime,
     updater: Updater,
     owner_id: Optional[int] = None,
+    heartbeat=None,
 ) -> None:
     from ..keyboards import reminder_list
     from . import common
@@ -357,6 +360,10 @@ async def cb_settings(
         await message.answer(
             tz_text(user), reply_markup=timezone_choices(POPULAR_ZONES, zone_time)
         )
+    elif action == "status":
+        from .status import build_status
+
+        await message.answer(await build_status(db, user, now, updater, heartbeat))
     elif action == "help":
         await message.answer(common.HELP)
     elif action == "about":

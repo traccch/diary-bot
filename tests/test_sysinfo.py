@@ -7,6 +7,8 @@ from unittest import mock
 
 from bot import sysinfo
 
+from .test_handlers import USER_ID, BotTestCase
+
 
 class CpuMeterTest(unittest.TestCase):
     """Мгновенной загрузки не бывает — она считается между двумя замерами."""
@@ -98,6 +100,50 @@ class ProgressLoadTest(unittest.TestCase):
         from bot.handlers.update import render_progress
 
         self.assertIn("<i>34 с</i>", render_progress("tests", {"tests"}, 34))
+
+
+class StatusInChatTest(BotTestCase):
+    """То же, что видно в консоли, но с телефона."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        # замер загрузки в тесте ждать незачем
+        import bot.handlers.status as status_module
+
+        self._sample = status_module.SAMPLE_SECONDS
+        status_module.SAMPLE_SECONDS = 0
+
+    async def asyncTearDown(self):
+        import bot.handlers.status as status_module
+
+        status_module.SAMPLE_SECONDS = self._sample
+        await super().asyncTearDown()
+
+    async def test_status_answers_the_main_questions(self):
+        await self.send("120/80 68")
+        await self.send("кофе 300")
+        await self.send("пробег 203116")
+
+        answer = await self.send("/status")
+        self.assertIn("Состояние", answer)
+        self.assertIn("ядр", answer)  # машина
+        self.assertIn("давление 1", answer)
+        self.assertIn("траты 1", answer)
+        self.assertIn("пробег 1", answer)
+        self.assertRegex(answer, r"Ближайшее напоминание: <b>\d\d:\d\d</b>")
+
+    async def test_available_by_button(self):
+        await self.click("do:set:status")
+        self.assertIn("Состояние", self.bot.texts[-1])
+
+    async def test_works_without_git_and_heartbeat(self):
+        """Ни версии, ни пульса — но ответить всё равно есть чем."""
+        from bot.handlers.status import build_status
+        from bot.middlewares import now_for
+
+        user = await self.db.ensure_user(USER_ID)
+        text = await build_status(self.db, user, now_for("Europe/Moscow"))
+        self.assertIn("Состояние", text)
 
 
 if __name__ == "__main__":

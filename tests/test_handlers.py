@@ -124,6 +124,15 @@ class FakeUpdater:
     def is_git_repo(self) -> bool:
         return True
 
+    async def version(self, ref: str = "HEAD") -> str:
+        return "v1.9"
+
+    async def commit(self, ref: str = "HEAD") -> str:
+        return "0000000"
+
+    async def branch(self) -> str:
+        return "main"
+
     async def check(self) -> UpdateStatus:
         return self.status
 

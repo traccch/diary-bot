@@ -54,6 +54,7 @@ COMMANDS = [
     BotCommand(command="limit", description="Лимит на месяц"),
     BotCommand(command="update", description="Обновить бота"),
     BotCommand(command="car", description="Пробег: сводка по машине"),
+    BotCommand(command="status", description="Состояние бота и компьютера"),
     BotCommand(command="import", description="Загрузить операции файлом"),
     BotCommand(command="commands", description="Список всех команд"),
 ]
@@ -101,6 +102,7 @@ async def run() -> int:
 
     scheduler = ReminderScheduler(bot, db)
     heartbeat = Heartbeat(db, counter)
+    dispatcher["heartbeat"] = heartbeat
     watcher = UpdateWatcher(
         bot,
         db,
