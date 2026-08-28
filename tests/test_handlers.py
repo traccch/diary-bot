@@ -269,6 +269,28 @@ class HandlersTest(BotTestCase):
         self.assertIn("/stats", await self.send("/commands"))
         self.assertIn("ESC", await self.send("/about"))
 
+    async def test_ok_button_closes_the_record(self):
+        """Кнопки под записью нужны редко, а висят как незаконченное дело."""
+        await self.send("120/80 68")
+        self.assertIn("✅ Ок", self.bot.last_buttons)
+
+        await self.click("ok")
+        removed = [
+            call for call in self.bot.calls
+            if call.__class__.__name__ == "EditMessageReplyMarkup"
+        ]
+        self.assertTrue(removed)
+        self.assertIsNone(removed[-1].reply_markup)
+
+        # запись при этом на месте
+        self.assertEqual(len(await self.db.last_measurements(USER_ID)), 1)
+
+    async def test_ok_button_under_expenses_too(self):
+        await self.send("кофе 300")
+        self.assertIn("✅ Ок", self.bot.last_buttons)
+        await self.click("ok")
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)
+
     async def test_add_measurement(self):
         answer = await self.send("120/80 68")
         self.assertIn("120/80", answer)

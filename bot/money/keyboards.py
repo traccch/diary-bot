@@ -21,7 +21,8 @@ def transaction_actions(transaction: Transaction) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="🗑 Удалить", callback_data=f"delop:{transaction.id}"
                 ),
-            ]
+            ],
+            [InlineKeyboardButton(text="✅ Ок", callback_data="ok")],
         ]
     )
 

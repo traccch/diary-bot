@@ -18,7 +18,8 @@ def measurement_actions(measurement: Measurement) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=note_title, callback_data=f"note:{measurement.id}"),
                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{measurement.id}"),
-            ]
+            ],
+            [InlineKeyboardButton(text="✅ Ок", callback_data="ok")],
         ]
     )
 

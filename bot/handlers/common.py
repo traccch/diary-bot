@@ -7,6 +7,7 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
@@ -236,6 +237,21 @@ async def cmd_commands(message: Message) -> None:
 @router.message(Command("about"))
 async def cmd_about(message: Message) -> None:
     await message.answer(ABOUT)
+
+
+@router.callback_query(F.data == "ok")
+async def cb_ok(callback: CallbackQuery) -> None:
+    """Убирает кнопки под записью: дело сделано, читать больше нечего.
+
+    Кнопки «изменить» и «удалить» нужны редко, а висят под каждой записью и
+    выглядят как незаконченное дело.
+    """
+    await callback.answer("Готово")
+    if isinstance(callback.message, Message):
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
 
 
 @router.message(Command("target"))
