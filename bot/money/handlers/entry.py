@@ -146,7 +146,14 @@ async def save_transaction(
         category_id=category.id if category else None,
     )
 
+    litres = await _remember_fuel(db, user, transaction, text, parsed.happened_on)
+
     blocks = [render_transaction(transaction, user.currency, today)]
+    if litres:
+        blocks.append(
+            f"⛽ Записал заправку: <b>{litres:.1f} л</b>".replace(".", ",")
+            + f" · {format_money(round(parsed.amount / litres), user.currency)} за литр"
+        )
     if not transaction.is_income:
         warnings = await check_limits(db, user, transaction.category_id, today)
         if warnings:
@@ -156,6 +163,22 @@ async def save_transaction(
         "\n\n".join(blocks), reply_markup=transaction_actions(transaction)
     )
     return SAVED
+
+
+async def _remember_fuel(
+    db: Database, user: UserSettings, transaction, text: str, on_date: dt.date
+):
+    """Заправка — это не только трата: литры нужны, чтобы считать расход."""
+    from ...car.parsing import looks_like_fuel, parse_litres
+
+    if transaction.is_income:
+        return None
+    litres = parse_litres(text)
+    if litres is None or not looks_like_fuel(text):
+        return None
+
+    await db.add_fuel(user.user_id, on_date, litres, transaction.amount, transaction.note)
+    return litres
 
 
 async def cmd_last(

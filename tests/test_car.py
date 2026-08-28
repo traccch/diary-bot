@@ -167,6 +167,89 @@ class CarFlowTest(BotTestCase):
         self.assertIn(sections.CAR, topics)
 
 
+class FuelTest(unittest.TestCase):
+    """Литры: их пишут рядом с числом, и это не рубли и не дата."""
+
+    def test_litres_are_found(self):
+        from bot.car.parsing import parse_litres
+
+        for text, litres in (
+            ("заправка 13.2л", 13.2),
+            ("бензин 31,73 л", 31.73),
+            ("аи-92 40 литров", 40.0),
+        ):
+            with self.subTest(text=text):
+                self.assertAlmostEqual(parse_litres(text), litres)
+
+    def test_no_litres(self):
+        from bot.car.parsing import parse_litres
+
+        self.assertIsNone(parse_litres("кофе 300"))
+        self.assertIsNone(parse_litres("заправка 900л"))  # столько в бак не влезет
+
+    def test_fuel_words(self):
+        from bot.car.parsing import looks_like_fuel
+
+        self.assertTrue(looks_like_fuel("-833 заправка 13.2л"))
+        self.assertTrue(looks_like_fuel("бензин аи-92"))
+        self.assertFalse(looks_like_fuel("молоко 2л"))
+
+
+class FuelFlowTest(BotTestCase):
+    def said(self) -> str:
+        return "\n".join(self.bot.texts)
+
+    async def test_litres_are_not_a_date_and_not_a_price(self):
+        """«-833 заправка 13.2л» — это 833 ₽ за 13,2 л, а не 13 февраля."""
+        from bot.middlewares import now_for
+
+        today = now_for("Europe/Moscow").date()
+        await self.send("-833 заправка 13.2л")
+
+        transaction = (await self.db.last_transactions(USER_ID))[0]
+        self.assertEqual(transaction.amount, 83300)
+        self.assertEqual(transaction.happened_on, today)
+        self.assertIn("13.2", transaction.note)
+
+    async def test_fuel_is_remembered_with_litres(self):
+        await self.send("-833 заправка 13.2л")
+        self.assertIn("13,2 л", self.said())
+        self.assertIn("63", self.said())  # 833 / 13,2 ≈ 63 ₽ за литр
+
+        from bot.middlewares import now_for
+
+        today = now_for("Europe/Moscow").date()
+        fills = await self.db.fuel_between(USER_ID, today, today)
+        self.assertEqual(len(fills), 1)
+        self.assertAlmostEqual(fills[0].litres, 13.2)
+
+    async def test_plain_purchase_is_not_a_fill(self):
+        await self.send("молоко 2л 120")
+        from bot.middlewares import now_for
+
+        today = now_for("Europe/Moscow").date()
+        self.assertEqual(await self.db.fuel_between(USER_ID, today, today), [])
+
+    async def test_consumption_needs_two_fills(self):
+        from bot.car.stats import fuel_lines
+        from bot.db import UserSettings
+
+        user = UserSettings(user_id=USER_ID, tz="Europe/Moscow", currency="₽")
+        start, end = dt.date(2026, 8, 1), dt.date(2026, 8, 31)
+
+        await self.db.set_reading(USER_ID, dt.date(2026, 8, 10), 203000)
+        await self.db.add_fuel(USER_ID, dt.date(2026, 8, 10), 40, 250000)
+        lines = await fuel_lines(self.db, user, start, end)
+        self.assertTrue(any("40,0 л" in line for line in lines))
+        self.assertFalse(any("Расход" in line for line in lines))
+
+        # вторая заправка через 500 км: 40 литров на 500 км — это 8 л на сотню
+        await self.db.set_reading(USER_ID, dt.date(2026, 8, 20), 203500)
+        await self.db.add_fuel(USER_ID, dt.date(2026, 8, 20), 40, 250000)
+        lines = await fuel_lines(self.db, user, start, end)
+        self.assertTrue(any("8,0 л на 100 км" in line for line in lines))
+
+
 class ServiceTest(unittest.TestCase):
     """Правила молчания: про ТО слышно, только когда оно близко."""
 

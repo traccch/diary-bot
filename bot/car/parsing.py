@@ -34,6 +34,30 @@ def looks_like_mileage(text: str) -> bool:
     return parse_mileage(text) is not None
 
 
+#: Литры рядом с числом: «13.2л», «31,73 л», «40 литров».
+_LITRES = re.compile(r"(?<![\w.,])(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:л|литр\w*)(?![\w])", re.I)
+
+#: Слова, по которым понятно, что трата — про топливо.
+FUEL_WORDS = ("заправ", "бензин", "топлив", "дизел", "солярк", "аи-", "аи9", "аи 9")
+
+#: Больше в бак не влезет.
+MAX_LITRES = 200
+
+
+def parse_litres(text: str) -> Optional[float]:
+    """Сколько литров в строке. None — про литры там ничего нет."""
+    match = _LITRES.search(text or "")
+    if match is None:
+        return None
+    value = float(match.group(1).replace(",", "."))
+    return value if 0 < value <= MAX_LITRES else None
+
+
+def looks_like_fuel(text: str) -> bool:
+    lowered = (text or "").lower().replace("ё", "е")
+    return any(word in lowered for word in FUEL_WORDS)
+
+
 def strip_mileage(text: str) -> str:
     """Убирает из строки кусок про пробег, оставляя остальное как было.
 

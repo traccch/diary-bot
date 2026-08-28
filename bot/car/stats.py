@@ -78,9 +78,12 @@ async def build_report(db, user, today: dt.date) -> str:
         )
 
     cost = await cost_per_km(db, user, month_start, today)
-    if cost:
+    fuel = await fuel_lines(db, user, month_start, today)
+    if cost or fuel:
         lines.append("")
+    if cost:
         lines.append(cost)
+    lines.extend(fuel)
 
     from .service import full_line
 
@@ -90,6 +93,51 @@ async def build_report(db, user, today: dt.date) -> str:
         lines.append("")
         lines.append("<i>Сегодняшнего показания нет — пришли число с одометра.</i>")
     return "\n".join(lines)
+
+
+async def fuel_lines(db, user, start: dt.date, end: dt.date) -> list[str]:
+    """Заправки за месяц и, если хватает данных, расход на сотню.
+
+    Расход считается по-честному: литры, залитые между двумя заправками,
+    на километры, проеханные за то же время. Первая заправка в счёт не идёт —
+    неизвестно, сколько было в баке до неё.
+    """
+    fills = await db.fuel_between(user.user_id, start, end)
+    if not fills:
+        return []
+
+    litres = sum(item.litres for item in fills)
+    spent = sum(item.amount for item in fills)
+    word = plural(len(fills), "заправка", "заправки", "заправок")
+    line = f"⛽ {len(fills)} {word} · {litres:.1f} л".replace(".", ",")
+    if spent and litres:
+        line += f" · {format_money(round(spent / litres), user.currency)} за литр"
+    lines = [line]
+
+    spent_litres, driven = 0.0, 0
+    for previous, current in zip(fills, fills[1:]):
+        start_km = await _km_at(db, user.user_id, previous.on_date)
+        end_km = await _km_at(db, user.user_id, current.on_date)
+        if start_km is None or end_km is None or end_km <= start_km:
+            continue
+        spent_litres += current.litres
+        driven += end_km - start_km
+
+    if spent_litres and driven:
+        per_hundred = spent_litres / driven * 100
+        lines.append(
+            f"Расход: <b>{per_hundred:.1f} л на 100 км</b>".replace(".", ",")
+        )
+    return lines
+
+
+async def _km_at(db, user_id: int, day: dt.date) -> Optional[int]:
+    """Пробег на этот день: точное показание или ближайшее до него."""
+    exact = await db.reading_on(user_id, day)
+    if exact is not None:
+        return exact.km
+    before = await db.reading_before(user_id, day)
+    return before.km if before else None
 
 
 async def cost_per_km(db, user, start: dt.date, end: dt.date) -> str:

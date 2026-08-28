@@ -56,6 +56,26 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(self.parse("кино 800 вчера").happened_on, TODAY - dt.timedelta(days=1))
         self.assertEqual(self.parse("подарок 3000 05.08").happened_on, dt.date(2026, 8, 5))
 
+    def test_units_are_not_money_and_not_dates(self):
+        """«13.2л» — тринадцать литров, а не 13 февраля и не 13 рублей."""
+        parsed = self.parse("-833 заправка 13.2л")
+        self.assertEqual(parsed.amount, 83300)
+        self.assertEqual(parsed.happened_on, TODAY)
+        self.assertIn("13.2", parsed.note)
+
+        self.assertEqual(self.parse("бензин 1999 31,73 л").amount, 199900)
+        self.assertEqual(self.parse("молоко 2л 120").amount, 12000)
+        self.assertEqual(self.parse("мясо 500гр 450").amount, 45000)
+
+    def test_measure_alone_is_not_a_purchase(self):
+        self.assertIsNone(self.parse("заправка 13.2л"))
+
+    def test_real_dates_still_work(self):
+        self.assertEqual(self.parse("подарок 3000 05.08").happened_on, dt.date(2026, 8, 5))
+        self.assertEqual(
+            self.parse("подарок 3000 05.08.2025").happened_on, dt.date(2025, 8, 5)
+        )
+
     def test_no_amount(self):
         self.assertIsNone(self.parse("просто текст"))
 

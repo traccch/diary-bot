@@ -22,6 +22,17 @@ CREATE TABLE IF NOT EXISTS car_readings (
     PRIMARY KEY (user_id, on_date)
 );
 
+CREATE TABLE IF NOT EXISTS car_fuel (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    on_date TEXT NOT NULL,
+    litres  REAL NOT NULL,
+    amount  INTEGER NOT NULL DEFAULT 0,
+    note    TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_car_fuel_user ON car_fuel(user_id, on_date);
+
 CREATE TABLE IF NOT EXISTS car_service (
     user_id     INTEGER PRIMARY KEY,
     due_km      INTEGER NOT NULL,
@@ -39,6 +50,20 @@ MAX_KM = 3_000_000
 class Reading:
     on_date: dt.date
     km: int
+
+
+@dataclass(frozen=True)
+class Fuel:
+    """Заправка: сколько литров, за сколько и когда."""
+
+    on_date: dt.date
+    litres: float
+    amount: int = 0
+    note: str = ""
+
+    @property
+    def price_per_litre(self) -> int:
+        return round(self.amount / self.litres) if self.litres else 0
 
 
 @dataclass(frozen=True)
@@ -117,6 +142,37 @@ class CarRepo:
         )
         row = await cur.fetchone()
         return row["cnt"] if row else 0
+
+    # -------------------------------------------------------------- заправки
+
+    async def add_fuel(
+        self, user_id: int, on_date: dt.date, litres: float, amount: int, note: str = ""
+    ) -> Fuel:
+        await self.conn.execute(
+            "INSERT INTO car_fuel (user_id, on_date, litres, amount, note)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (user_id, on_date.isoformat(), float(litres), int(amount), note[:200]),
+        )
+        await self.conn.commit()
+        return Fuel(on_date, float(litres), int(amount), note)
+
+    async def fuel_between(
+        self, user_id: int, start: dt.date, end: dt.date
+    ) -> list[Fuel]:
+        cur = await self.conn.execute(
+            "SELECT on_date, litres, amount, note FROM car_fuel"
+            " WHERE user_id = ? AND on_date BETWEEN ? AND ? ORDER BY on_date",
+            (user_id, start.isoformat(), end.isoformat()),
+        )
+        return [
+            Fuel(
+                dt.date.fromisoformat(row["on_date"]),
+                row["litres"],
+                row["amount"],
+                row["note"],
+            )
+            for row in await cur.fetchall()
+        ]
 
     # ------------------------------------------------------------------- ТО
 
