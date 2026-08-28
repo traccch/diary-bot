@@ -374,7 +374,7 @@ async def cb_settings(
     elif action == "proxy":
         from .status import cmd_proxy
 
-        await cmd_proxy(message, proxy_now)
+        await cmd_proxy(message, None, db, None, proxy_now)
     elif action == "log":
         from .status import cmd_log
 

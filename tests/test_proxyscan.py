@@ -161,5 +161,34 @@ class ProxyCommandTest(BotTestCase):
         self.assertIn("socks5://127.0.0.1:10808", self.bot.edits[-1])
 
 
+class SetProxyFromChatTest(BotTestCase):
+    """Настройка из чата: до файла с телефона не дотянуться."""
+
+    async def test_auto_is_remembered_and_applied(self):
+        await self.send("/proxy auto")
+
+        self.assertIn("искать локальный прокси", self.bot.texts[-1])
+        self.assertEqual(await self.db.get_meta("proxy"), "auto")
+        self.assertTrue(self.restart_event.is_set())  # перезапуск, чтобы применить
+
+    async def test_address_is_accepted(self):
+        await self.send("/proxy socks5://127.0.0.1:2080")
+        self.assertEqual(await self.db.get_meta("proxy"), "socks5://127.0.0.1:2080")
+
+    async def test_off_returns_to_direct(self):
+        await self.db.set_meta("proxy", "auto")
+        await self.send("/proxy off")
+
+        self.assertEqual(await self.db.get_meta("proxy"), "")
+        self.assertIn("напрямую", self.bot.texts[-1])
+
+    async def test_vpn_key_is_refused_with_help(self):
+        await self.send("/proxy vless://uuid@host:443")
+
+        self.assertIn("не адрес прокси", self.bot.texts[-1])
+        self.assertIsNone(await self.db.get_meta("proxy"))
+        self.assertFalse(self.restart_event.is_set())
+
+
 if __name__ == "__main__":
     unittest.main()

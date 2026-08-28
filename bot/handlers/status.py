@@ -11,16 +11,18 @@ import datetime as dt
 from typing import Optional
 
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, Message
 
 import os
+import time
 
 from .. import sysinfo
 from ..db import Database, UserSettings
 from ..formatting import esc
 from ..reminders import next_fire, wait_text
 from ..updater import Updater
+from .update import RESTART_NOTICE
 
 router = Router(name="status")
 
@@ -36,6 +38,37 @@ SAMPLE_SECONDS = 0.6
 
 #: Где журнал лежит по умолчанию — тот же путь, что в настройках.
 DEFAULT_LOG = os.path.join("data", "bot.log")
+
+
+async def set_proxy(
+    message: Message, wanted: str, db: Database, restart_event=None
+) -> None:
+    """Запоминает настройку прокси в базе и перезапускает бота."""
+    from ..config import AUTO, read_proxy
+
+    if wanted.lower() in {"off", "выкл", "нет", "напрямую", "0"}:
+        await db.set_meta("proxy", "")
+        value, said = "", "напрямую, без прокси"
+    else:
+        try:
+            value = read_proxy(wanted)
+        except RuntimeError as exc:
+            await message.answer(f"⚠️ {esc(str(exc))}")
+            return
+        await db.set_meta("proxy", value)
+        said = "искать локальный прокси" if value == AUTO else f"через {value}"
+
+    if restart_event is None:
+        await message.answer(
+            f"Запомнил: {esc(said)}. Настройка вступит в силу после перезапуска."
+        )
+        return
+
+    await message.answer(
+        f"✅ Запомнил: <b>{esc(said)}</b>.\nПерезапускаюсь, чтобы применить."
+    )
+    await db.set_meta(RESTART_NOTICE, f"{message.chat.id}|{time.time():.0f}")
+    restart_event.set()
 
 
 def env_lines(env_file: str, lookalikes: tuple = ()) -> list[str]:
@@ -181,12 +214,25 @@ async def cmd_log(message: Message, config_log_path: str = "") -> None:
 @router.message(Command("proxy", "vpn"))
 async def cmd_proxy(
     message: Message,
+    command: Optional[CommandObject] = None,
+    db: Optional[Database] = None,
+    restart_event=None,
     proxy_now: str = "",
     env_file: str = "",
     env_lookalikes: tuple = (),
 ) -> None:
-    """Проверка прокси: что нашлось на этой машине и что бот использует."""
+    """Проверка прокси — и его настройка, чтобы не лезть в файлы.
+
+    Файл настроек лежит рядом с ботом, а человек с телефоном до него не
+    дотянется; да и на компьютере легко открыть не тот файл. Поэтому
+    «/proxy auto» делает то же самое, что строка в .env, только сразу.
+    """
     from .. import proxyscan
+
+    wanted = (command.args or "").strip() if command else ""
+    if wanted and db is not None:
+        await set_proxy(message, wanted, db, restart_event)
+        return
 
     note = await message.answer("🔍 Смотрю, есть ли на компьютере локальный прокси…")
     probes = await proxyscan.scan()

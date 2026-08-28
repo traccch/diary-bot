@@ -74,7 +74,9 @@ async def run() -> int:
 
     warn_about_env(config)
 
-    proxy = config.proxy
+    # настройка из чата важнее файла: её человек задал последней и осознанно
+    proxy = await db.get_meta("proxy")
+    proxy = config.proxy if proxy is None else proxy
     if proxy == AUTO:
         proxy = await proxyscan.find() or ""
         if proxy:
