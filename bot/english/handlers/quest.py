@@ -167,3 +167,13 @@ async def cb_next(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
         await _ask(callback.message, state)
+
+
+@router.callback_query(F.data.startswith("eq:"))
+async def cb_lost_quest(callback: CallbackQuery) -> None:
+    """Кнопка из квеста, которого больше нет: бот перезапускался."""
+    await callback.answer("Этот квест уже закрыт")
+    if isinstance(callback.message, Message):
+        await callback.message.answer(
+            "Квест прервался — похоже, бот перезапускался. Начать заново — /quest"
+        )

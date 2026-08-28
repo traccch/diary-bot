@@ -20,6 +20,7 @@ from . import sections
 from .car.db import SCHEMA as CAR_SCHEMA
 from .car.db import CarRepo
 from .english.db import SCHEMA as ENGLISH_SCHEMA
+from .fsmstore import SCHEMA as FSM_SCHEMA
 from .english.db import EnglishRepo
 from .money.db import SCHEMA as MONEY_SCHEMA
 from .money.db import MoneyRepo
@@ -82,7 +83,9 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
-SCHEMA = CORE_SCHEMA + PRESSURE_SCHEMA + MONEY_SCHEMA + ENGLISH_SCHEMA + CAR_SCHEMA
+SCHEMA = (
+    CORE_SCHEMA + PRESSURE_SCHEMA + MONEY_SCHEMA + ENGLISH_SCHEMA + CAR_SCHEMA + FSM_SCHEMA
+)
 
 
 _CREATE_TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\);", re.DOTALL)

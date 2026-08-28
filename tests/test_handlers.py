@@ -273,6 +273,34 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class LostSessionTest(BotTestCase):
+    """Кнопка из сессии, которой больше нет: бот успел перезапуститься."""
+
+    async def test_english_button_without_a_session(self):
+        await self.click("eng:a:0")
+        self.assertIn("Сессия прервалась", self.bot.texts[-1])
+        self.assertTrue(self.bot.last_buttons)  # предлагаем продолжить
+
+    async def test_quest_button_without_a_quest(self):
+        await self.click("eq:a:0")
+        self.assertIn("Квест прервался", self.bot.texts[-1])
+
+    async def test_live_session_is_not_touched(self):
+        await self.send("/eng")
+        await self.click("eng:more")  # начали сессию по-настоящему
+        before = len(self.bot.texts)
+
+        await self.click("eng:idk")
+        self.assertNotIn("прервалась", "\n".join(self.bot.texts[before:]))
+
+    async def test_word_lookup_button_is_not_a_lost_session(self):
+        """«Взять в изучение» — не кнопка сессии, ловушка её трогать не должна."""
+        await self.click("go:english")
+        await self.send("loot")
+        await self.click("eng:add:games:loot")
+        self.assertIsNotNone(await self.db.eng_progress_of(USER_ID, "games:loot"))
+
+
 class HandlersTest(BotTestCase):
     # ------------------------------------------------------------- базовое
 

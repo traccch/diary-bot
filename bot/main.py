@@ -17,7 +17,7 @@ from aiogram.exceptions import (
     TelegramNetworkError,
     TelegramUnauthorizedError,
 )
-from aiogram.fsm.storage.memory import MemoryStorage
+from .fsmstore import SQLiteStorage
 from aiogram.types import BotCommand
 
 from .pressure import charts
@@ -96,7 +96,9 @@ async def run() -> int:
     updater = Updater()
     restart_event = asyncio.Event()
 
-    dispatcher = Dispatcher(storage=MemoryStorage())
+    storage = SQLiteStorage(db.conn)
+    await storage.forget_stale()
+    dispatcher = Dispatcher(storage=storage)
     dispatcher["db"] = db
     dispatcher["updater"] = updater
     dispatcher["owner_id"] = config.owner_id
@@ -127,7 +129,7 @@ async def run() -> int:
         config.owner_id,
         interval_hours=config.auto_update_minutes / 60,
         installer=(
-            make_installer(bot, db, updater, restart_event)
+            make_installer(bot, db, updater, restart_event, storage)
             if config.auto_update == INSTALL
             else None
         ),
@@ -184,7 +186,13 @@ async def run() -> int:
         await bot.session.close()
 
 
-def make_installer(bot: Bot, db: Database, updater: Updater, restart_event: asyncio.Event):
+def make_installer(
+    bot: Bot,
+    db: Database,
+    updater: Updater,
+    restart_event: asyncio.Event,
+    storage: Optional[SQLiteStorage] = None,
+):
     """Ставит обновление само, показывая всё то же, что и по кнопке.
 
     Автоматическое обновление осмысленно ровно потому, что перед перезапуском
@@ -194,6 +202,12 @@ def make_installer(bot: Bot, db: Database, updater: Updater, restart_event: asyn
     """
 
     async def install(owner: int, status) -> None:
+        if storage is not None and await storage.busy():
+            # человек посреди разговора: сессия английского, ввод траты, квест
+            logger.info("Отложил обновление: идёт разговор")
+            await db.set_meta("notified_commit", "")  # вернёмся к нему позже
+            return
+
         head = await bot.send_message(
             owner,
             "⬇️ <b>Обновляюсь сам</b>\n" + render_status(status),

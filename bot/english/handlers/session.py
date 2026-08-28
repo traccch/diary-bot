@@ -262,3 +262,24 @@ async def cb_next(
     await callback.answer()
     if isinstance(callback.message, Message):
         await _ask_next(callback.message, db, user, state)
+
+
+#: Последняя надежда: кнопка из сессии, которой больше нет. Так бывает, если
+#: бот успел перезапуститься, а сообщение осталось висеть в чате. Молчать
+#: нельзя — человек нажимает и не понимает, почему ничего не происходит.
+#: Только кнопки самой сессии: «eng:add:…» из перевода слова живёт своей
+#: жизнью и в этой ловушке не нуждается.
+LOST_BUTTONS = ("eng:a:", "eng:idk", "eng:next")
+
+
+@router.callback_query(
+    F.data.func(lambda value: isinstance(value, str) and value.startswith(LOST_BUTTONS))
+)
+async def cb_lost_session(callback: CallbackQuery) -> None:
+    await callback.answer("Эта сессия уже закрыта")
+    if isinstance(callback.message, Message):
+        await callback.message.answer(
+            "Сессия прервалась — похоже, бот перезапускался.\n"
+            "Ответы, которые ты успел дать, засчитаны.",
+            reply_markup=after_session(True),
+        )
