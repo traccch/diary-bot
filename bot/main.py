@@ -26,7 +26,8 @@ from .config import Config, load_config
 from .db import Database
 from .handlers import build_router
 from .formatting import duration
-from .config import INSTALL, OFF
+from . import proxyscan
+from .config import AUTO, INSTALL, OFF
 from .handlers.update import RESTART_NOTICE, ProgressReport, render_status
 from .heartbeat import Heartbeat
 from .journal import Counter, JournalMiddleware
@@ -70,8 +71,16 @@ async def run() -> int:
     db = Database(config.db_path, config.default_tz)
     await db.connect()
 
+    proxy = config.proxy
+    if proxy == AUTO:
+        proxy = await proxyscan.find() or ""
+        if proxy:
+            print(f"  Нашёл локальный прокси: {proxy}\n")
+        else:
+            logger.info("Локального прокси не нашёл — иду напрямую")
+
     try:
-        session = build_session(config.proxy)
+        session = build_session(proxy)
     except RuntimeError as exc:
         print(f"\n✗ {exc}\n")
         return 0
@@ -143,7 +152,7 @@ async def run() -> int:
         keep = await restarting_now(db)
         await bot.delete_webhook(drop_pending_updates=not keep)
         startup = await collect_startup(
-            me.username, db, config, updater, dispatcher["transcriber"]
+            me.username, db, config, updater, dispatcher["transcriber"], proxy
         )
 
         scheduler.start()
@@ -265,6 +274,7 @@ async def collect_startup(
     config: Config,
     updater: Updater,
     transcriber: Transcriber,
+    proxy: str = "",
 ) -> console.Startup:
     """Собирает шапку: версия, база, записи, ближайшее напоминание, что включено.
 
@@ -329,8 +339,8 @@ async def collect_startup(
         ),
         (
             "Через прокси",
-            bool(config.proxy),
-            config.proxy or "напрямую",
+            bool(proxy),
+            proxy or ("не нашёл — напрямую" if config.proxy == AUTO else "напрямую"),
         ),
         (
             "Обновления",

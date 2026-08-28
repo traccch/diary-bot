@@ -56,11 +56,17 @@ PROXY_HELP = (
 )
 
 
+#: Просьба найти прокси самому.
+AUTO = "auto"
+
+
 def read_proxy(raw: str) -> str:
     """Проверяет адрес прокси. Непонятное — лучше отвергнуть громко."""
     value = raw.strip().strip('"').strip("'")
     if not value:
         return ""
+    if value.lower() in {AUTO, "авто", "сам"}:
+        return AUTO
     lowered = value.lower()
     if lowered.startswith(PROXY_SCHEMES):
         return value
