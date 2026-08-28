@@ -254,8 +254,9 @@ async def cmd_proxy(
         if not proxy_now:
             lines.append("")
             lines.append(
-                "<i>Впиши в .env строку <code>TELEGRAM_PROXY=auto</code> "
-                "и перезапусти бота — он будет ходить через него.</i>"
+                "Включить — <code>/proxy auto</code>: запомню и перезапущусь сам.\n"
+                "<i>Можно и конкретный: <code>/proxy "
+                f"{esc(working[0].url)}</code></i>"
             )
     elif listening:
         ports = ", ".join(str(item.port) for item in listening)

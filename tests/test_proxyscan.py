@@ -101,7 +101,9 @@ class ProxyCommandTest(BotTestCase):
 
         answer = self.bot.edits[-1]
         self.assertIn("socks5://127.0.0.1:2080", answer)
-        self.assertIn("TELEGRAM_PROXY=auto", answer)
+        # подсказывать файл, когда есть команда, — значит гонять человека зря
+        self.assertIn("/proxy auto", answer)
+        self.assertNotIn("TELEGRAM_PROXY", answer)
 
     async def test_open_but_useless_port(self):
         first, second = self.patch(opened={7890})
