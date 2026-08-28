@@ -127,6 +127,14 @@ async def _step(progress: Progress, step: str) -> None:
         logger.debug("Не смог сообщить о шаге %s", step, exc_info=True)
 
 
+#: Файл с именем версии в корне репозитория. Тег был бы уместнее, но файл
+#: приезжает вместе с кодом обычным git pull и виден в любом клоне, даже когда
+#: теги не выгружены.
+VERSION_FILE = "VERSION"
+
+#: Имя версии — это «1.4», «v1.4», «1.4.2»; всё остальное подозрительно.
+_VERSION_OK = re.compile(r"^v?\d+(\.\d+){0,2}(-[\w.]+)?$")
+
 #: «v1.2-3-gabc1234» — это «три коммита после v1.2», но читать это невозможно.
 _DESCRIBE = re.compile(r"^(?P<tag>.+?)-(?P<ahead>\d+)-g[0-9a-f]{4,}$")
 
@@ -162,16 +170,37 @@ class Updater:
         return await self._git("rev-parse", "--short", ref)
 
     async def version(self, ref: str = "HEAD") -> str:
-        """Имя версии по тегам. Пусто, если тегов в репозитории нет вовсе.
+        """Имя версии: файл VERSION, иначе ближайший тег, иначе пусто.
 
-        Тег — это то, что человек может назвать вслух и запомнить; хеш он
-        может только сверить. Поэтому «v1.2 → v1.3», а хеши остаются
-        запасным вариантом на случай репозитория без тегов.
+        Имя человек может назвать вслух и запомнить, хеш — только сверить.
+        Поэтому «v1.2 → v1.3»; хеши остаются запасным вариантом, и на них всё
+        по-прежнему работает, если имени взять неоткуда.
         """
+        named = await self._named_version(ref)
+        if named:
+            return named
+
         code, output = await run_command(
             ["git", "describe", "--tags", "--abbrev=7", ref], self.root, GIT_TIMEOUT
         )
         return pretty_version(output) if code == 0 else ""
+
+    async def _named_version(self, ref: str) -> str:
+        if ref == "HEAD":
+            try:
+                raw = (self.root / VERSION_FILE).read_text(encoding="utf-8")
+            except OSError:
+                raw = ""
+        else:
+            code, raw = await run_command(
+                ["git", "show", f"{ref}:{VERSION_FILE}"], self.root, GIT_TIMEOUT
+            )
+            raw = raw if code == 0 else ""
+
+        name = raw.strip().splitlines()[0].strip() if raw.strip() else ""
+        if not _VERSION_OK.match(name):
+            return ""
+        return name if name.startswith("v") else f"v{name}"
 
     async def is_dirty(self) -> bool:
         """Есть ли незакоммиченные правки — тогда обновляться опасно."""

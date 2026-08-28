@@ -102,6 +102,24 @@ class UpdaterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Обновление до", render_status(status))
         self.assertIn("Добавил график веса", render_status(status))
 
+    async def test_version_comes_from_the_file(self):
+        """Файл VERSION приезжает обычным git pull — даже там, где нет тегов."""
+        (self.origin / "VERSION").write_text("1.4\n", encoding="utf-8")
+        git(self.origin, "add", "VERSION")
+        git(self.origin, "commit", "-m", "Версия 1.4")
+
+        status = await self.updater.check()
+        self.assertEqual(status.there, "v1.4")
+        self.assertIn("Обновление до v1.4", render_status(status))
+
+    async def test_broken_version_file_is_ignored(self):
+        (self.origin / "VERSION").write_text("да кто ж его знает\n", encoding="utf-8")
+        git(self.origin, "add", "VERSION")
+        git(self.origin, "commit", "-m", "Мусор вместо версии")
+
+        status = await self.updater.check()
+        self.assertEqual(status.there, status.remote)  # молча откатились к хешу
+
     async def test_versions_are_named_by_tags(self):
         """Тег человек может назвать вслух, хеш — только сверить."""
         git(self.origin, "tag", "v1.0")
