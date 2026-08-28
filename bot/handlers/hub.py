@@ -82,6 +82,7 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         (
             ("✍️ Записать пробег", "do:car:add"),
             ("📊 Сводка", "do:car:stats"),
+            ("⛽ Топливо", "do:car:fuel"),
         ),
     ),
     "eng": (
@@ -290,6 +291,8 @@ async def cb_car(
         await message.answer(car.ASK + "\n\n<i>Передумал — /cancel</i>")
     elif action == "stats":
         await message.answer(await car_stats.build_report(db, user, now.date()))
+    elif action == "fuel":
+        await message.answer(await car_stats.build_fuel_report(db, user, now.date()))
 
 
 @router.callback_query(F.data.startswith("do:eng:"))

@@ -250,6 +250,77 @@ class FuelFlowTest(BotTestCase):
         self.assertTrue(any("8,0 л на 100 км" in line for line in lines))
 
 
+class FuelReportTest(unittest.IsolatedAsyncioTestCase):
+    """Отдельный разговор про топливо: сколько, почём и как менялось."""
+
+    async def asyncSetUp(self):
+        self.db = memory_db()
+        await self.db.connect()
+        await self.db.ensure_user(USER.user_id)
+
+    async def asyncTearDown(self):
+        await self.db.close()
+
+    async def report(self):
+        from bot.car.stats import build_fuel_report
+
+        return await build_fuel_report(self.db, USER, TODAY)
+
+    async def test_empty(self):
+        self.assertIn("Заправок пока нет", await self.report())
+
+    async def test_one_fill_cannot_tell_the_consumption(self):
+        await self.db.add_fuel(USER.user_id, dt.date(2026, 8, 17), 31.73, 199900)
+        text = await self.report()
+        self.assertIn("31,7 л", text)
+        self.assertIn("63", text)  # ₽ за литр
+        self.assertIn("со второй заправки", text)
+
+    async def test_prices_and_consumption(self):
+        await self.db.set_reading(USER.user_id, dt.date(2026, 8, 10), 203000)
+        await self.db.add_fuel(USER.user_id, dt.date(2026, 8, 10), 40, 240000)
+        await self.db.set_reading(USER.user_id, dt.date(2026, 8, 20), 203500)
+        await self.db.add_fuel(USER.user_id, dt.date(2026, 8, 20), 40, 260000)
+
+        text = await self.report()
+        self.assertIn("2 заправки", text)
+        self.assertIn("80,0 л", text)
+        self.assertIn("Дешевле всего", text)
+        self.assertIn("8,0 л на 100 км", text)
+        self.assertIn("12,5 км", text)  # на литре
+        self.assertIn("+8%", text)  # 60 → 65 ₽ за литр
+
+    async def test_impossible_consumption_is_not_shown(self):
+        """Забытая заправка даёт литр на сотню — молчать честнее."""
+        await self.db.set_reading(USER.user_id, dt.date(2026, 7, 15), 199000)
+        await self.db.add_fuel(USER.user_id, dt.date(2026, 7, 15), 32, 195000)
+        await self.db.set_reading(USER.user_id, dt.date(2026, 8, 17), 203116)
+        await self.db.add_fuel(USER.user_id, dt.date(2026, 8, 17), 31.73, 199900)
+
+        text = await self.report()
+        self.assertNotIn("л на 100 км", text)
+        self.assertIn("не записана", text)
+
+    async def test_old_notes_are_picked_up(self):
+        """Литры писались и раньше — историю жалко терять."""
+        from bot.money.db import EXPENSE
+
+        category = await self.db.find_category_by_name(USER.user_id, "Транспорт", EXPENSE)
+        await self.db.add_transaction(
+            USER.user_id, EXPENSE, 199900, "бензин АИ-92, 31,73 л, пробег 203116",
+            dt.date(2026, 8, 17), category.id,
+        )
+        await self.db.add_transaction(
+            USER.user_id, EXPENSE, 30000, "кофе", dt.date(2026, 8, 18), None
+        )
+
+        self.assertEqual(await self.db.import_fuel_from_notes(USER.user_id), 1)
+        self.assertEqual(await self.db.count_fuel(USER.user_id), 1)
+
+        # повторный проход ничего не задваивает
+        self.assertEqual(await self.db.import_fuel_from_notes(USER.user_id), 0)
+
+
 class ServiceTest(unittest.TestCase):
     """Правила молчания: про ТО слышно, только когда оно близко."""
 

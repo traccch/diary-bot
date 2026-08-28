@@ -182,6 +182,7 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
         if not fresh:
             await self._migrate()
         await self.sync_money_categories()
+        await self.catch_up_fuel()
         await self._conn.commit()
 
     async def _migrate(self) -> None:
@@ -266,6 +267,19 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
         )
         await self.conn.commit()
         return len(rows)
+
+    async def catch_up_fuel(self) -> int:
+        """Разово вытаскивает заправки из трат, записанных до появления литров."""
+        if await self.get_meta("fuel_imported"):
+            return 0
+        cur = await self.conn.execute("SELECT user_id FROM users")
+        found = 0
+        for row in await cur.fetchall():
+            found += await self.import_fuel_from_notes(row["user_id"])
+        await self.set_meta("fuel_imported", dt.date.today().isoformat())
+        if found:
+            logger.info("Нашёл заправок в старых записях: %s", found)
+        return found
 
     async def owner_id(self) -> Optional[int]:
         """Хозяин бота — тот, кто написал ему первым."""

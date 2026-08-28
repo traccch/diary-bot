@@ -174,6 +174,49 @@ class CarRepo:
             for row in await cur.fetchall()
         ]
 
+    async def count_fuel(self, user_id: int) -> int:
+        cur = await self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM car_fuel WHERE user_id = ?", (user_id,)
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    async def import_fuel_from_notes(self, user_id: int) -> int:
+        """Достаёт заправки из уже записанных трат — один раз, для прошлого.
+
+        Литры человек писал в заметках и до того, как бот научился их читать.
+        Выбрасывать эту историю жалко: без неё расход считать не из чего.
+        """
+        from .parsing import looks_like_fuel, parse_litres
+
+        cur = await self.conn.execute(
+            "SELECT amount, note, happened_on FROM transactions"
+            " WHERE user_id = ? AND kind = 'expense' ORDER BY happened_on",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+
+        known = {
+            (item.on_date, round(item.litres, 2))
+            for item in await self.fuel_between(
+                user_id, dt.date(1970, 1, 1), dt.date(2999, 1, 1)
+            )
+        }
+
+        added = 0
+        for row in rows:
+            note = row["note"] or ""
+            litres = parse_litres(note)
+            if litres is None or not looks_like_fuel(note):
+                continue
+            on_date = dt.date.fromisoformat(row["happened_on"])
+            if (on_date, round(litres, 2)) in known:
+                continue
+            known.add((on_date, round(litres, 2)))
+            await self.add_fuel(user_id, on_date, litres, row["amount"], note)
+            added += 1
+        return added
+
     # ------------------------------------------------------------------- ТО
 
     async def set_service(

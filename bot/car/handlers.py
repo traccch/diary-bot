@@ -260,6 +260,13 @@ async def cmd_car(
     await message.answer(await stats.build_report(db, user, now.date()))
 
 
+@router.message(Command("fuel", "gas", "benzin"))
+async def cmd_fuel(
+    message: Message, db: Database, user: UserSettings, now: dt.datetime
+) -> None:
+    await message.answer(await stats.build_fuel_report(db, user, now.date()))
+
+
 @router.callback_query(F.data == "car:add")
 async def cb_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(CarEntry.waiting_km)
