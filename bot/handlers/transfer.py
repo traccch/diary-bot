@@ -33,7 +33,8 @@ HOW_TO = (
     '    {"date": "2026-08-12", "amount": 215, "note": "кешбэк"}\n'
     "  ]\n"
     "}</code>\n\n"
-    "Минус — расход, плюс — доход. Категорию подберу сам по заметке.\n\n"
+    "Минус — расход, плюс — доход. Категорию подберу сам по заметке — "
+    "или впиши её прямо: <code>\"category\": \"Продукты\"</code>.\n\n"
     "<i>Такой файл может собрать и любой ИИ: покажи ему свои записи и попроси "
     "перевести в этот формат. Я покажу, что получилось, и запишу только после "
     "твоего подтверждения. Уже записанное не задвоится.</i>"
@@ -90,6 +91,21 @@ def preview(plan: transfer.Plan, currency: str) -> str:
         hidden = len(plan.rows) - PREVIEW_LIMIT
         lines.append(f"<i>…и ещё {hidden}</i>")
     return "\n".join(lines)
+
+
+def pick_category(row: transfer.Row, categories):
+    """Названная в файле категория важнее угаданной по заметке.
+
+    «электроэнергия, долг за три месяца» — это коммуналка, а не долг, и никакой
+    разбор заметки этого не поймёт: слово в ней стоит честное. Поэтому файл
+    может сказать прямо.
+    """
+    if row.category:
+        wanted = row.category.lower().replace("ё", "е")
+        for category in categories:
+            if category.name.lower().replace("ё", "е") == wanted:
+                return category
+    return match_category(row.note, categories)
 
 
 @router.message(Command("import"))
@@ -180,7 +196,7 @@ async def cb_apply(
     written = 0
     for row in plan.rows:
         categories = await db.list_categories(user.user_id, row.kind)
-        category = match_category(row.note, categories) or await db.get_fallback_category(
+        category = pick_category(row, categories) or await db.get_fallback_category(
             user.user_id, row.kind
         )
         await db.add_transaction(

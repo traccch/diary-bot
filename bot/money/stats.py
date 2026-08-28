@@ -71,6 +71,34 @@ def render_breakdown(
     return lines
 
 
+async def transfers_line(
+    db: Database, user: UserSettings, start: dt.date, end: dt.date
+) -> Optional[str]:
+    """Строка про долги и накопления — то, что не потрачено, а переложено.
+
+    Отложенное вернётся, занятое придётся отдать. В общей сумме трат это
+    искажает картину в обе стороны, поэтому считаем отдельно и говорим об этом
+    вслух: молча выкинутые из сводки тысячи пугают сильнее, чем объяснённые.
+    """
+    out, out_count = await db.total_between(user.user_id, start, end, EXPENSE, transfers=True)
+    into, in_count = await db.total_between(user.user_id, start, end, INCOME, transfers=True)
+    if not out and not into:
+        return None
+
+    parts = []
+    if out:
+        parts.append(f"отложено и отдано <b>{format_money(out, user.currency)}</b>")
+    if into:
+        parts.append(f"занято и снято <b>{format_money(into, user.currency)}</b>")
+    total = out_count + in_count
+    return (
+        f"🤝 Долги и накопления: {', '.join(parts)}"
+        f" · {total} {records_word(total)}\n"
+        "<i>В тратах и доходах выше это не учтено — деньги переложены, "
+        "а не потрачены.</i>"
+    )
+
+
 def limit_line(spent: int, limit: int, currency: str) -> str:
     share = spent / limit if limit else 0
     if share >= 1:
@@ -94,11 +122,16 @@ async def build_report(
         first = await db.first_transaction_date(user.user_id)
         start = first or today
 
-    spent, spent_count = await db.total_between(user.user_id, start, end, EXPENSE)
-    earned, earned_count = await db.total_between(user.user_id, start, end, INCOME)
+    spent, spent_count = await db.total_between(
+        user.user_id, start, end, EXPENSE, transfers=False
+    )
+    earned, earned_count = await db.total_between(
+        user.user_id, start, end, INCOME, transfers=False
+    )
+    moved = await transfers_line(db, user, start, end)
     header = f"💰 <b>Деньги {esc(title)}</b>"
 
-    if not spent and not earned:
+    if not spent and not earned and not moved:
         return (
             f"{header}\n\nПока пусто. Напиши, например: <code>кофе 300</code> "
             "или <code>+90000 зарплата</code>"
@@ -120,13 +153,21 @@ async def build_report(
         lines.append(f"{word}: <b>{format_money(abs(balance), user.currency)}</b>")
     lines.append("")
 
+    if moved:
+        lines.append(moved)
+        lines.append("")
+
     if spent:
-        totals = await db.totals_by_category(user.user_id, start, end, EXPENSE)
+        totals = await db.totals_by_category(
+            user.user_id, start, end, EXPENSE, transfers=False
+        )
         lines.append("<b>Куда ушло</b>")
         lines.extend(render_breakdown(totals, spent, user.currency))
 
     if earned:
-        income_totals = await db.totals_by_category(user.user_id, start, end, INCOME)
+        income_totals = await db.totals_by_category(
+            user.user_id, start, end, INCOME, transfers=False
+        )
         if len(income_totals) > 1:
             lines.append("")
             lines.append("<b>Откуда пришло</b>")
@@ -158,7 +199,7 @@ async def month_limit_summary(
     if limit is None:
         return None
     spent, _ = await db.total_between(
-        user.user_id, month_start(today), month_end(today), EXPENSE
+        user.user_id, month_start(today), month_end(today), EXPENSE, transfers=False
     )
     left = limit - spent
     tail = (
@@ -186,7 +227,9 @@ async def check_limits(
 
     total_limit = await db.get_limit(user.user_id, TOTAL_LIMIT_CATEGORY)
     if total_limit:
-        spent, _ = await db.total_between(user.user_id, start, end, EXPENSE)
+        spent, _ = await db.total_between(
+            user.user_id, start, end, EXPENSE, transfers=False
+        )
         warnings.extend(_limit_warning("Лимит на месяц", spent, total_limit, user.currency))
 
     return warnings
@@ -210,18 +253,20 @@ def _limit_warning(name: str, spent: int, limit: int, currency: str) -> list[str
 async def balance_text(db: Database, user: UserSettings, today: dt.date) -> str:
     """Короткий ответ на /balance: доходы, расходы и остаток за месяц."""
     start, end = month_start(today), month_end(today)
-    earned, _ = await db.total_between(user.user_id, start, end, INCOME)
-    spent, _ = await db.total_between(user.user_id, start, end, EXPENSE)
+    earned, _ = await db.total_between(user.user_id, start, end, INCOME, transfers=False)
+    spent, _ = await db.total_between(user.user_id, start, end, EXPENSE, transfers=False)
+    moved = await transfers_line(db, user, start, end)
     balance = earned - spent
 
-    if not earned and not spent:
+    if not earned and not spent and not moved:
         return f"💰 <b>{month_title(today)}</b>\n\nЗа этот месяц записей нет."
 
     sign = "🟢" if balance >= 0 else "🔴"
     word = "Остаток" if balance >= 0 else "Перерасход"
-    return (
+    text = (
         f"💰 <b>{month_title(today)}</b>\n\n"
         f"Пришло: <b>{format_money(earned, user.currency)}</b>\n"
         f"Ушло: <b>{format_money(spent, user.currency)}</b>\n"
         f"{sign} {word}: <b>{format_money(abs(balance), user.currency)}</b>"
     )
+    return text + f"\n\n{moved}" if moved else text

@@ -208,3 +208,93 @@ class MoneyStorageTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TransferCategoriesTest(unittest.IsolatedAsyncioTestCase):
+    """Долги и накопления: деньги двигаются, но это не трата и не заработок."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Database(str(Path(self._tmp.name) / "t.db"), "Europe/Moscow")
+        await self.db.connect()
+        self.user = await self.db.ensure_user(USER.user_id)
+
+    async def asyncTearDown(self):
+        await self.db.close()
+        self._tmp.cleanup()
+
+    async def spend(self, amount: int, note: str, name: str, kind: str = EXPENSE):
+        category = await self.db.find_category_by_name(USER.user_id, name, kind)
+        self.assertIsNotNone(category, f"нет категории {name}")
+        await self.db.add_transaction(
+            USER.user_id, kind, amount, note, TODAY, category.id
+        )
+
+    async def test_categories_exist_and_are_marked(self):
+        expenses = {c.name: c for c in await self.db.list_categories(USER.user_id, EXPENSE)}
+        self.assertTrue(expenses["Долги"].is_transfer)
+        self.assertTrue(expenses["Накопления"].is_transfer)
+        self.assertFalse(expenses["Продукты"].is_transfer)
+
+        incomes = {c.name: c for c in await self.db.list_categories(USER.user_id, INCOME)}
+        self.assertTrue(incomes["Долги"].is_transfer)
+
+    async def test_totals_can_exclude_them(self):
+        await self.spend(30000, "кофе", "Кафе")
+        await self.spend(500000, "отложил", "Накопления")
+
+        everything, _ = await self.db.total_between(USER.user_id, TODAY, TODAY, EXPENSE)
+        real, count = await self.db.total_between(
+            USER.user_id, TODAY, TODAY, EXPENSE, transfers=False
+        )
+        moved, _ = await self.db.total_between(
+            USER.user_id, TODAY, TODAY, EXPENSE, transfers=True
+        )
+        self.assertEqual(everything, 530000)
+        self.assertEqual((real, count), (30000, 1))
+        self.assertEqual(moved, 500000)
+
+    async def test_report_keeps_them_out_of_spending(self):
+        await self.spend(30000, "кофе", "Кафе")
+        await self.spend(500000, "отложил", "Накопления")
+        await self.spend(100000, "займ у мамы", "Долги", INCOME)
+
+        text = await build_report(self.db, self.user, "month", TODAY)
+        self.assertIn("Расходы: <b>300", text)  # 300 ₽, а не 5 300
+        self.assertIn("Долги и накопления", text)
+        self.assertNotIn("🏦 Накопления", text)  # в разбивке трат их нет
+
+    async def test_balance_says_it_out_loud(self):
+        await self.spend(500000, "отложил", "Накопления")
+        text = await balance_text(self.db, self.user, TODAY)
+        self.assertIn("переложены", text)
+
+    async def test_limits_ignore_them(self):
+        await self.db.set_limit(USER.user_id, TOTAL_LIMIT_CATEGORY, 1_000_00)
+        await self.spend(500000, "отложил", "Накопления")
+        # 5 000 ₽ отложено при лимите 1 000 ₽ — это не перерасход
+        self.assertEqual(await check_limits(self.db, self.user, None, TODAY), [])
+
+    async def test_old_diary_gets_new_categories(self):
+        """Категория, появившаяся в новой версии, должна доехать до старой базы."""
+        await self.db.conn.execute(
+            "DELETE FROM money_categories WHERE user_id = ? AND name IN ('Долги', 'Дети')",
+            (USER.user_id,),
+        )
+        await self.db.conn.commit()
+
+        await self.db.sync_money_categories()
+        names = {c.name for c in await self.db.list_categories(USER.user_id, EXPENSE)}
+        self.assertIn("Долги", names)
+        self.assertIn("Дети", names)
+
+    async def test_kids_category_catches_the_usual_words(self):
+        categories = await self.db.list_categories(USER.user_id, EXPENSE)
+        for note in ("три слипы сыну на вырост", "пять боди Льву", "детская корзина"):
+            with self.subTest(note=note):
+                self.assertEqual(match_category(note, categories).name, "Дети")
+
+        # аптека важнее: слово длиннее и точнее
+        self.assertEqual(
+            match_category("аптека, перекись сыну", categories).name, "Здоровье"
+        )

@@ -29,7 +29,8 @@ MAX_AMOUNT_MINOR = 10**11
 INSTRUCTIONS = (
     "Список операций для телеграм-бота-дневника. Суммы в рублях: минус — "
     "расход, плюс — доход. Даты — ГГГГ-ММ-ДД. Заметка — коротко, своими "
-    "словами: по ней бот сам подберёт категорию."
+    "словами: по ней бот сам подберёт категорию. Необязательное поле category "
+    "задаёт категорию прямо — оно важнее заметки."
 )
 
 
@@ -43,6 +44,8 @@ class Row:
     kind: str
     amount: int  # в копейках, всегда положительное
     note: str
+    #: Название категории, если файл называет её прямо. Пусто — подберём по заметке.
+    category: str = ""
 
     @property
     def signed(self) -> int:
@@ -107,6 +110,7 @@ def dump(rows: Sequence[Row], currency: str = "₽") -> bytes:
                 "date": row.happened_on.isoformat(),
                 "amount": round(row.signed / 100, 2),
                 "note": row.note,
+                **({"category": row.category} if row.category else {}),
             }
             for row in rows
         ],
@@ -155,6 +159,7 @@ def parse(
         minor = _to_minor(item.get("amount"))
         day = _to_date(item.get("date"), today)
         note = str(item.get("note") or "").strip()[:200]
+        category = str(item.get("category") or "").strip()[:60]
         if minor is None or day is None:
             skipped += 1
             continue
@@ -164,7 +169,7 @@ def parse(
         if str(item.get("kind") or "").lower() in {EXPENSE, INCOME}:
             kind = str(item["kind"]).lower()
 
-        row = Row(day, kind, abs(minor), note)
+        row = Row(day, kind, abs(minor), note, category)
         key = _key(row.happened_on, row.kind, row.amount, row.note)
         if key in seen:
             duplicates += 1

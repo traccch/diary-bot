@@ -111,6 +111,29 @@ class ImportFlowTest(BotTestCase):
         by_note = {item.note: item for item in stored}
         self.assertEqual(by_note["продукты"].category_name, "Продукты")
 
+    async def test_explicit_category_beats_the_note(self):
+        """«электроэнергия, долг за три месяца» — это коммуналка, а не долг."""
+        await self.send_document(
+            payload({
+                "date": "2026-08-16",
+                "amount": -2080,
+                "note": "электроэнергия, долг за несколько месяцев",
+                "category": "Жильё",
+            })
+        )
+        await self.click("imp:apply")
+
+        stored = (await self.db.last_transactions(USER_ID))[0]
+        self.assertEqual(stored.category_name, "Жильё")
+
+    async def test_unknown_category_falls_back_to_the_note(self):
+        await self.send_document(
+            payload({"date": "2026-08-16", "amount": -300, "note": "кофе",
+                     "category": "Криптовалюты"})
+        )
+        await self.click("imp:apply")
+        self.assertEqual((await self.db.last_transactions(USER_ID))[0].category_name, "Кафе")
+
     async def test_second_import_does_not_double(self):
         await self.send_document(payload(*ROWS))
         await self.click("imp:apply")

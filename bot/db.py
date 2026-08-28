@@ -175,6 +175,7 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo):
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(SCHEMA)
         await self._migrate()
+        await self.sync_money_categories()
         await self._conn.commit()
 
     async def _migrate(self) -> None:

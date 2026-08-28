@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS money_categories (
     emoji       TEXT NOT NULL DEFAULT '📦',
     keywords    TEXT NOT NULL DEFAULT '',
     is_fallback INTEGER NOT NULL DEFAULT 0,
+    is_transfer INTEGER NOT NULL DEFAULT 0,
     UNIQUE(user_id, kind, name)
 );
 
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS money_limits (
 );
 """
 
+#: Категории-«перекладывания»: деньги не потрачены и не заработаны, а
+#: переложены из кармана в карман. Отложенное вернётся, занятое придётся
+#: отдать — считать это тратой значит обманывать себя в обе стороны.
+TRANSFER_CATEGORIES = frozenset({"Долги", "Накопления"})
+
 #: (эмодзи, название, ключевые слова) — расходные категории
 DEFAULT_EXPENSE_CATEGORIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("🍔", "Продукты", ("продукты", "еда", "магазин", "супермаркет", "пятерочка",
@@ -76,6 +82,13 @@ DEFAULT_EXPENSE_CATEGORIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("🎓", "Образование", ("курсы", "обучение", "учеба", "учёба", "репетитор",
                            "школа", "университет")),
     ("🎁", "Подарки", ("подарок", "подарки", "цветы", "днюха")),
+    ("🧸", "Дети", ("сыну", "сына", "дочке", "дочери", "ребенку", "ребёнку",
+                    "детская", "детский", "детское", "детские", "боди", "слипа",
+                    "слипы", "подгузники", "коляска", "игрушки", "погремушка",
+                    "пеленки", "пелёнки", "смесь")),
+    ("🤝", "Долги", ("долг", "долги", "займ", "кредит", "рассрочка", "отдал долг")),
+    ("🏦", "Накопления", ("накопления", "накопить", "копилка", "отложил",
+                          "сбережения", "подушка")),
     ("📦", "Прочее", ()),
 )
 
@@ -89,6 +102,8 @@ DEFAULT_INCOME_CATEGORIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
                         "компенсация", "налоговый", "вычет")),
     ("📈", "Проценты", ("проценты", "вклад", "дивиденды", "купон", "накопительный")),
     ("🎁", "Подарили", ("подарили", "подарок", "дарение")),
+    ("🤝", "Долги", ("долг", "займ", "занял", "одолжил", "в долг")),
+    ("🏦", "Накопления", ("со счёта", "со счета", "снял накопления", "из копилки")),
     ("💰", "Прочее", ()),
 )
 
@@ -101,6 +116,8 @@ class Category:
     emoji: str
     keywords: tuple[str, ...] = field(default=())
     is_fallback: bool = False
+    #: Долги и накопления: движение денег, но не трата и не заработок.
+    is_transfer: bool = False
 
     @property
     def title(self) -> str:
@@ -165,6 +182,7 @@ def _row_to_category(row: aiosqlite.Row) -> Category:
         emoji=row["emoji"],
         keywords=_split_keywords(row["keywords"]),
         is_fallback=bool(row["is_fallback"]),
+        is_transfer=bool(row["is_transfer"]),
     )
 
 
@@ -181,7 +199,14 @@ def _row_to_transaction(row: aiosqlite.Row) -> Transaction:
     )
 
 
-_CATEGORY_COLUMNS = "id, kind, name, emoji, keywords, is_fallback"
+_CATEGORY_COLUMNS = "id, kind, name, emoji, keywords, is_fallback, is_transfer"
+
+
+def _transfer_clause(transfers: Optional[bool]) -> str:
+    """Условие «только перекладывания» / «всё, кроме них» / «всё подряд»."""
+    if transfers is None:
+        return ""
+    return f" AND COALESCE(c.is_transfer, 0) = {1 if transfers else 0}"
 
 _TRANSACTION_SELECT = """
 SELECT t.id, t.kind, t.amount, t.note, t.happened_on, t.category_id, c.name, c.emoji
@@ -196,23 +221,49 @@ class MoneyRepo:
     conn: aiosqlite.Connection
 
     async def seed_money_categories(self, user_id: int) -> None:
-        """Создаёт набор категорий по умолчанию (идемпотентно)."""
+        """Создаёт набор категорий по умолчанию (идемпотентно).
+
+        Зовётся и при первом знакомстве, и при запуске: категории, добавленные
+        в новой версии бота, должны появиться и у того, кто завёл дневник
+        раньше. Свои категории и переименованные чужие не трогаются — за это
+        отвечает INSERT OR IGNORE.
+        """
         rows = []
         for kind, defaults in (
             (EXPENSE, DEFAULT_EXPENSE_CATEGORIES),
             (INCOME, DEFAULT_INCOME_CATEGORIES),
         ):
             rows.extend(
-                (user_id, kind, name, emoji, join_keywords(keywords), int(not keywords))
+                (
+                    user_id,
+                    kind,
+                    name,
+                    emoji,
+                    join_keywords(keywords),
+                    int(not keywords),
+                    int(name in TRANSFER_CATEGORIES),
+                )
                 for emoji, name, keywords in defaults
             )
         await self.conn.executemany(
             "INSERT OR IGNORE INTO money_categories"
-            " (user_id, kind, name, emoji, keywords, is_fallback)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            " (user_id, kind, name, emoji, keywords, is_fallback, is_transfer)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         await self.conn.commit()
+
+    async def sync_money_categories(self) -> int:
+        """Доливает новые категории всем, кто завёл дневник раньше.
+
+        Категория, появившаяся в новой версии, иначе не досталась бы старому
+        дневнику: он получает свой набор один раз, при первом знакомстве.
+        """
+        cur = await self.conn.execute("SELECT user_id FROM users")
+        users = [row["user_id"] for row in await cur.fetchall()]
+        for user_id in users:
+            await self.seed_money_categories(user_id)
+        return len(users)
 
     # ------------------------------------------------------------ категории
 
@@ -412,10 +463,15 @@ class MoneyRepo:
     # --------------------------------------------------------------- итоги
 
     async def totals_by_category(
-        self, user_id: int, start: dt.date, end: dt.date, kind: str = EXPENSE
+        self,
+        user_id: int,
+        start: dt.date,
+        end: dt.date,
+        kind: str = EXPENSE,
+        transfers: Optional[bool] = None,
     ) -> list[CategoryTotal]:
         cur = await self.conn.execute(
-            """
+            f"""
             SELECT t.category_id AS category_id,
                    COALESCE(c.name, 'Без категории') AS name,
                    COALESCE(c.emoji, '❔') AS emoji,
@@ -424,6 +480,7 @@ class MoneyRepo:
             FROM transactions t
             LEFT JOIN money_categories c ON c.id = t.category_id
             WHERE t.user_id = ? AND t.kind = ? AND t.happened_on BETWEEN ? AND ?
+            {_transfer_clause(transfers)}
             GROUP BY t.category_id
             ORDER BY total DESC
             """,
@@ -441,11 +498,21 @@ class MoneyRepo:
         ]
 
     async def total_between(
-        self, user_id: int, start: dt.date, end: dt.date, kind: str = EXPENSE
+        self,
+        user_id: int,
+        start: dt.date,
+        end: dt.date,
+        kind: str = EXPENSE,
+        transfers: Optional[bool] = None,
     ) -> tuple[int, int]:
+        """Сумма и число записей. `transfers`: None — все, False — без долгов
+        и накоплений, True — только они."""
         cur = await self.conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS cnt FROM transactions"
-            " WHERE user_id = ? AND kind = ? AND happened_on BETWEEN ? AND ?",
+            "SELECT COALESCE(SUM(t.amount), 0) AS total, COUNT(*) AS cnt"
+            " FROM transactions t"
+            " LEFT JOIN money_categories c ON c.id = t.category_id"
+            " WHERE t.user_id = ? AND t.kind = ? AND t.happened_on BETWEEN ? AND ?"
+            + _transfer_clause(transfers),
             (user_id, kind, start.isoformat(), end.isoformat()),
         )
         row = await cur.fetchone()
