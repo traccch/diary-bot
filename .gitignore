@@ -10,3 +10,6 @@ __pycache__/
 venv/
 .pytest_cache/
 .mypy_cache/
+
+# скачанное установщиком голоса: whisper.cpp, ffmpeg и модель
+tools/whisper/

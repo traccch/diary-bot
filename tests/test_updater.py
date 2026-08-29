@@ -185,10 +185,40 @@ class UpdaterTest(unittest.IsolatedAsyncioTestCase):
 
         result = await self.updater.apply(run_tests=False)
         self.assertFalse(result.ok)
-        self.assertIn("несохранённые правки", result.message)
+        self.assertIn("bot.py", result.message)  # сказал, что именно мешает
         self.assertEqual(
             (self.clone / "bot.py").read_text(encoding="utf-8"), "моя правка\n"
         )
+
+    async def test_new_files_do_not_block_the_update(self):
+        """Скачанный whisper и прочее рядом с ботом — не наши правки."""
+        voice = self.clone / "tools" / "whisper"
+        voice.mkdir(parents=True)
+        (voice / "model.bin").write_text("не текст, но пусть\n", encoding="utf-8")
+        self.commit_upstream("Обновление сверху")
+
+        self.assertEqual(await self.updater.local_changes(), [])
+        result = await self.updater.apply(run_tests=False)
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue((voice / "model.bin").exists())  # не тронули
+
+    async def test_changed_files_are_named(self):
+        (self.clone / "tests" / "test_sample.py").write_text("# правка\n", encoding="utf-8")
+        self.assertEqual(await self.updater.local_changes(), ["tests/test_sample.py"])
+        self.assertTrue(await self.updater.is_dirty())
+
+    async def test_stash_clears_the_way_and_keeps_the_edits(self):
+        (self.clone / "bot.py").write_text("моя правка\n", encoding="utf-8")
+        git(self.clone, "add", "-A")
+        self.commit_upstream("Обновление сверху")
+
+        await self.updater.stash_local()
+        self.assertEqual(await self.updater.local_changes(), [])
+
+        result = await self.updater.apply(run_tests=False)
+        self.assertTrue(result.ok, result.message)
+        # правка не потеряна: лежит в stash и достаётся обратно
+        self.assertIn("отложил перед обновлением", git(self.clone, "stash", "list"))
 
     async def test_green_tests_keep_the_update(self):
         self.commit_upstream("Рабочая версия")
@@ -365,6 +395,25 @@ class RestartFlagTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(dispatcher.stopped)
         # короткий long poll: через фильтрующую сеть длинный запрос обрывают
         self.assertEqual(dispatcher.polling_timeout, 15)
+
+
+class LocalChangesWordingTest(unittest.TestCase):
+    """Сообщение про правки читают с телефона: важно, какие именно файлы."""
+
+    def test_names_the_files(self):
+        from bot.updater import describe_local_changes
+
+        text = describe_local_changes(["bot/voice.py", "README.md"])
+        self.assertIn("bot/voice.py", text)
+        self.assertIn("README.md", text)
+        self.assertIn("/update force", text)
+
+    def test_long_list_is_cut(self):
+        from bot.updater import MAX_LISTED_CHANGES, describe_local_changes
+
+        text = describe_local_changes([f"file{i}.py" for i in range(MAX_LISTED_CHANGES + 3)])
+        self.assertIn("и ещё 3 файла", text)
+        self.assertNotIn(f"file{MAX_LISTED_CHANGES + 2}.py", text)
 
 
 class AutoUpdateConfigTest(unittest.TestCase):

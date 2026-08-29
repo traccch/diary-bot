@@ -193,7 +193,23 @@ async def force_update(
     Обычно откат на красных тестах спасает. Но если не сходится сам тест — не
     код, а проверка, — обновления перестают приезжать вовсе, и починка тоже.
     Решение оставляем человеку и говорим прямо, чем он рискует.
+
+    Заодно это единственный способ обновиться, когда в папке правки: они
+    уезжают в git stash — не потеряются, но и дорогу не перекроют.
     """
+    changed = await updater.local_changes()
+    if changed:
+        try:
+            await updater.stash_local()
+        except UpdateError as exc:
+            await message.answer(f"⚠️ Не смог отложить правки: {esc(str(exc))}")
+            return
+        await message.answer(
+            f"📦 Отложил правки в <code>git stash</code> "
+            f"({len(changed)} {plural(len(changed), 'файл', 'файла', 'файлов')}). "
+            "Вернуть их: <code>git stash pop</code>."
+        )
+
     report = ProgressReport(message)
     await report.start()
     try:

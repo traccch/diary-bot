@@ -225,6 +225,33 @@ _VERSION_OK = re.compile(r"^v?\d+(\.\d+){0,2}(-[\w.]+)?$")
 _DESCRIBE = re.compile(r"^(?P<tag>.+?)-(?P<ahead>\d+)-g[0-9a-f]{4,}$")
 
 
+#: Строка `git status --porcelain`: знаки состояния, пробел и путь. Новые
+#: файлы из вывода исключены заранее — про них git спрашивают отдельно.
+_PORCELAIN = re.compile(r"^(?P<state>[A-Z?!]{1,2})\s+(?P<path>.+)$")
+
+#: Столько имён показываем в сообщении: список на весь экран никто не читает.
+MAX_LISTED_CHANGES = 5
+
+STASH_LABEL = "бот отложил перед обновлением"
+
+
+def describe_local_changes(paths: Sequence[str]) -> str:
+    """Что именно мешает обновиться — по именам, а не «разберись сам».
+
+    Сообщение читают чаще всего с телефона и не у компьютера, так что толку
+    от «есть несохранённые правки» немного: главное — какие.
+    """
+    listed = ", ".join(f"<code>{path}</code>" for path in paths[:MAX_LISTED_CHANGES])
+    extra = len(paths) - MAX_LISTED_CHANGES
+    if extra > 0:
+        listed += f" и ещё {extra} {plural(extra, 'файл', 'файла', 'файлов')}"
+    return (
+        f"В папке бота изменено: {listed}. Обновление их затрёт, поэтому не лезу.\n\n"
+        "<i>Если правки не нужны — <code>/update force</code>: отложу их "
+        "в <code>git stash</code> и обновлюсь.</i>"
+    )
+
+
 def pretty_version(raw: str) -> str:
     """Приводит вывод git describe к человеческому виду: v1.2+3."""
     match = _DESCRIBE.match(raw.strip())
@@ -288,9 +315,32 @@ class Updater:
             return ""
         return name if name.startswith("v") else f"v{name}"
 
+    async def local_changes(self) -> list[str]:
+        """Изменённые файлы, которые обновление затрёт.
+
+        Новые файлы рядом с ботом в счёт не идут: скачанный whisper, чей-то
+        блокнот, выгрузка — git их не тронет, а обновление из-за них когда-то
+        вставало намертво. Считаем только то, что и правда можно потерять:
+        изменённое, добавленное, удалённое, переименованное.
+        """
+        raw = await self._git("status", "--porcelain", "--untracked-files=no")
+        changed = []
+        for line in raw.splitlines():
+            match = _PORCELAIN.match(line.strip())
+            if match is None:
+                continue
+            # «R  было -> стало»: терять можно только то, что стало
+            path = match.group("path").split(" -> ")[-1]
+            changed.append(path.strip('"'))
+        return changed
+
     async def is_dirty(self) -> bool:
         """Есть ли незакоммиченные правки — тогда обновляться опасно."""
-        return bool(await self._git("status", "--porcelain"))
+        return bool(await self.local_changes())
+
+    async def stash_local(self) -> None:
+        """Убирает правки в git stash: не потерять важнее, чем не тронуть."""
+        await self._git("stash", "push", "-m", STASH_LABEL)
 
     # ------------------------------------------------------------- проверка
 
@@ -483,12 +533,9 @@ class Updater:
         if not self.is_git_repo():
             return UpdateResult(False, "Обновляться неоткуда: это не git-репозиторий.")
 
-        if await self.is_dirty():
-            return UpdateResult(
-                False,
-                "В папке бота есть несохранённые правки — не буду их затирать. "
-                "Разберись с ними у компьютера и попробуй снова.",
-            )
+        changed = await self.local_changes()
+        if changed:
+            return UpdateResult(False, describe_local_changes(changed))
 
         status = await self.check()
         if not status.available:
