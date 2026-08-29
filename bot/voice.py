@@ -213,9 +213,12 @@ def build_transcriber(config: Optional[VoiceConfig]) -> Transcriber:
 def clean_speech(text: str) -> str:
     """Приводит расшифровку к тому, что понимает разбор текста.
 
-    Диктовка почти всегда звучит как «сто двадцать на восемьдесят»: числа
-    whisper пишет цифрами, а вот «на» между ними и точку в конце убираем сами.
+    Диктовка звучит как «сто двадцать на восемьдесят», а whisper пишет как
+    слышит: то цифрами, то словами — предсказать нельзя. Числительные
+    переводим в цифры, точку в конце убираем; всё прочее разбирается дальше
+    обычными правилами.
     """
-    text = (text or "").strip()
-    text = text.replace(" ", " ")
-    return text.strip(" .!?\n\t")
+    from .speech import words_to_numbers
+
+    text = (text or "").strip().replace(" ", " ")
+    return words_to_numbers(text).strip(" .!?\n\t")
