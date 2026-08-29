@@ -145,23 +145,27 @@ async def voice_message(
 async def try_answer(
     message: Message, text: str, db: Database, user: UserSettings, now: dt.datetime
 ) -> bool:
-    """Голое число сразу после вопроса — ответ на него.
+    """Ответ сразу после вопроса — ответ на него, а не загадка.
 
-    Бот спросил про шаги, человек прислал «5182». Разбирать это как трату или
-    давление бессмысленно: вопрос задавал он сам, и минуту назад.
+    Бот спросил про шаги, человек прислал «5182»; спросил про сон — «23:06-6:30».
+    Разбирать это как трату или давление бессмысленно: вопрос задавал он сам,
+    и минуту назад.
     """
-    value = pending.as_number(text)
-    if value is None:
-        return False
-
     asked = pending.recall(await db.get_meta(pending.key(user.user_id)), now)
     if not asked:
         return False
 
     if asked == sections.CAR:
+        value = pending.as_number(text)
+        if value is None:
+            return False
         await db.set_meta(pending.key(user.user_id), "")
         await save_mileage(message, int(value), db, user, now.date())
         return True
+
+    value = pending.as_answer(asked, text)
+    if value is None:
+        return False
 
     clean = prompts.clean(asked, str(value))
     if clean is None:

@@ -228,3 +228,100 @@ class BareNumberAnswerTest(BotTestCase):
         await self.ask("steps")
         await self.send("кофе 300")
         self.assertEqual(await self.db.count_transactions(USER_ID), 1)
+
+
+class SleepAnswerTest(BotTestCase):
+    """Ответ на вопрос о сне — это сон, а не трата в тридцать рублей.
+
+    Бот спросил «сколько вышло за ночь», человек ответил «23:06-6:30» — и
+    получил расход 30 ₽ «23:06-6». Слово «сон» он не писал: его минуту назад
+    написал сам бот.
+    """
+
+    async def ask_about_sleep(self) -> None:
+        from bot import pending
+
+        await self.db.ensure_user(USER_ID)
+        await self.db.set_meta(
+            pending.key(USER_ID), pending.remember("sleep", self.now())
+        )
+
+    async def stored(self) -> float:
+        record = await self.db.get_metric(USER_ID, "sleep", self.today())
+        return record.value if record else 0.0
+
+    async def test_range_is_sleep(self):
+        await self.ask_about_sleep()
+        answer = await self.send("23:06-6:30")
+
+        self.assertIn("7 ч 24 мин", answer)
+        self.assertEqual(await self.stored(), 7 * 60 + 24)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+
+    async def test_clock_is_sleep(self):
+        await self.ask_about_sleep()
+        answer = await self.send("7:20")
+
+        self.assertIn("7 ч 20 мин", answer)
+        self.assertEqual(await self.stored(), 7 * 60 + 20)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+
+    async def test_bare_number_is_hours(self):
+        await self.ask_about_sleep()
+        answer = await self.send("7,5")
+
+        self.assertIn("7 ч 30 мин", answer)
+        self.assertEqual(await self.stored(), 450)
+
+    async def test_minutes_are_still_understood(self):
+        """«450» часами не бывает — значит минуты."""
+        await self.ask_about_sleep()
+        await self.send("450")
+        self.assertEqual(await self.stored(), 450)
+
+    async def test_words_are_understood_too(self):
+        await self.ask_about_sleep()
+        await self.send("7ч30м")
+        self.assertEqual(await self.stored(), 450)
+
+    async def test_expense_after_the_question_is_still_an_expense(self):
+        await self.ask_about_sleep()
+        await self.send("кофе 300")
+
+        self.assertEqual(await self.db.count_transactions(USER_ID), 1)
+        self.assertEqual(await self.stored(), 0)
+
+    async def test_short_night_is_still_a_night(self):
+        """«2:15» — плохо, но так бывает."""
+        await self.ask_about_sleep()
+        await self.send("2:15")
+        self.assertEqual(await self.stored(), 135)
+
+    async def test_nonsense_falls_through(self):
+        """Двадцать часов подряд не спят — и тратой это тоже не станет."""
+        await self.ask_about_sleep()
+        await self.send("20:30")
+
+        self.assertEqual(await self.stored(), 0)
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+
+
+class TimeIsNotMoneyTest(BotTestCase):
+    """Время суток не сумма: «7:20» без вопроса — тоже не двадцать рублей."""
+
+    async def test_clock_is_not_an_expense(self):
+        await self.db.ensure_user(USER_ID)
+        await self.send("7:20")
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+
+    async def test_range_is_not_an_expense(self):
+        await self.db.ensure_user(USER_ID)
+        await self.send("23:06-6:30")
+        self.assertEqual(await self.db.count_transactions(USER_ID), 0)
+
+    async def test_amount_with_time_in_the_note(self):
+        await self.db.ensure_user(USER_ID)
+        await self.send("кофе 300 в 8:15")
+
+        last = (await self.db.last_transactions(USER_ID, limit=1))[0]
+        self.assertEqual(last.amount, 30000)

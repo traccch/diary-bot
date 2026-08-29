@@ -14,8 +14,14 @@ import datetime as dt
 import re
 from typing import Optional
 
+from .pressure import metrics, parsing
+
 #: Сколько времени голое число считается ответом на вопрос.
 LIVE_HOURS = 3
+
+#: Голое число в ответ на вопрос о сне — это часы, а не минуты: «7,5» значит
+#: семь с половиной часов. Больше шестнадцати часами не бывает, значит минуты.
+BARE_HOURS_LIMIT = 16
 
 #: Голое число: «5182», «7,5», «203 116». Всё остальное разбирается как обычно.
 _NUMBER = re.compile(r"^\s*(\d[\d  ]*(?:[.,]\d+)?)\s*$")
@@ -35,6 +41,39 @@ def as_number(text: str) -> Optional[float]:
         return float(digits)
     except ValueError:
         return None
+
+
+def as_answer(kind: str, text: str) -> Optional[float]:
+    """Ответ на заданный вопрос — в тех единицах, в которых он хранится.
+
+    Про сон спрашивают «сколько вышло за ночь», и отвечают на это как
+    отвечают людям: «23:06-6:30», «7:20», «7,5». Слово «сон» человек не
+    пишет — его только что написал сам бот, и подставить его — наша работа.
+    """
+    if kind == metrics.SLEEP.key:
+        return _sleep(text)
+    return as_number(text)
+
+
+def _sleep(text: str) -> Optional[float]:
+    """Минуты сна из ответа на вопрос. None — ответ не про сон."""
+    raw = (text or "").strip()
+    if not raw or not raw[0].isdigit():
+        return None
+
+    hours = as_number(raw)
+    if hours is not None:
+        return hours * 60 if hours <= BARE_HOURS_LIMIT else hours
+
+    # «23:06-6:30» и «7:20» бот уже умеет читать — но со словом «сон».
+    try:
+        entry = parsing.parse_entry(f"сон {raw}")
+    except parsing.ParseError:
+        return None
+    for metric in entry.metrics:
+        if metric.kind == metrics.SLEEP.key:
+            return metric.value
+    return None
 
 
 def remember(kind: str, now: dt.datetime) -> str:

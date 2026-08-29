@@ -57,7 +57,7 @@ def _hours(*values: float) -> tuple[Choice, ...]:
 SLEEP = Prompt(
     kind=metrics.SLEEP.key,
     question="😴 <b>Как спалось?</b>\nСколько вышло за ночь?",
-    hint="Точное время сна — <code>сон 23:20-7:05</code>.",
+    hint="Или ответь как есть: <code>23:20-7:05</code>, <code>7:30</code>.",
     choices=_hours(5, 6, 6.5, 7, 7.5, 8, 9),
     manual="сон 7ч30м",
 )
