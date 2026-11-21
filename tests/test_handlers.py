@@ -397,6 +397,27 @@ class HandlersTest(BotTestCase):
         self.assertEqual((await self.db.ensure_user(USER_ID)).section, "money")
         self.assertIn("Деньги", self.bot.edits[-1])
 
+    async def test_money_chart(self):
+        await self.click("go:money")
+        self.assertIn("рисовать нечего", await self.send("/chart"))
+
+        await self.send("кофе 300")
+        await self.send("такси 450")
+        await self.send("/chart")
+        self.assertEqual(len(self.bot.photos()), 1)
+        self.assertIn("Расходы", self.bot.photos()[-1].caption)
+
+        await self.click("mchart:all")
+        self.assertEqual(len(self.bot.photos()), 2)
+
+    async def test_money_stats_offers_chart(self):
+        await self.click("go:money")
+        await self.send("кофе 300")
+        await self.send("/stats")
+        markup = [c for c in self.bot.calls if getattr(c, "reply_markup", None)][-1].reply_markup
+        buttons = [b.callback_data for row in markup.inline_keyboard for b in row]
+        self.assertIn("mchart:month", buttons)
+
     async def test_money_entry_and_stats(self):
         await self.click("go:money")
         answer = await self.send("кофе 300")

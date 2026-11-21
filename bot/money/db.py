@@ -462,6 +462,32 @@ class MoneyRepo:
 
     # --------------------------------------------------------------- итоги
 
+    async def daily_totals(
+        self,
+        user_id: int,
+        start: dt.date,
+        end: dt.date,
+        kind: str = EXPENSE,
+        transfers: Optional[bool] = None,
+    ) -> list[tuple[dt.date, int]]:
+        """Сумма операций за каждый день, в котором они были, — для графика."""
+        cur = await self.conn.execute(
+            f"""
+            SELECT t.happened_on AS day, SUM(t.amount) AS total
+            FROM transactions t
+            LEFT JOIN money_categories c ON c.id = t.category_id
+            WHERE t.user_id = ? AND t.kind = ? AND t.happened_on BETWEEN ? AND ?
+            {_transfer_clause(transfers)}
+            GROUP BY t.happened_on
+            ORDER BY t.happened_on
+            """,
+            (user_id, kind, start.isoformat(), end.isoformat()),
+        )
+        return [
+            (dt.date.fromisoformat(row["day"]), row["total"])
+            for row in await cur.fetchall()
+        ]
+
     async def totals_by_category(
         self,
         user_id: int,

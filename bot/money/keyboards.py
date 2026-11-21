@@ -48,6 +48,17 @@ def money_periods(active: str) -> InlineKeyboardMarkup:
         mark = "· " if key == active else ""
         builder.button(text=f"{mark}{title}", callback_data=f"mrep:{key}")
     builder.adjust(4)
+    builder.row(InlineKeyboardButton(text="📈 График", callback_data=f"mchart:{active}"))
+    return builder.as_markup()
+
+
+def money_chart_periods(active: str) -> InlineKeyboardMarkup:
+    """Под картинкой — переключение периода самой картинки."""
+    builder = InlineKeyboardBuilder()
+    for key, title in PERIODS:
+        mark = "· " if key == active else ""
+        builder.button(text=f"{mark}{title}", callback_data=f"mchart:{key}")
+    builder.adjust(4)
     return builder.as_markup()
 
 

@@ -39,6 +39,8 @@ async def handle_command(
         await entry.cmd_undo(message, db, user)
     elif name == "del":
         await entry.cmd_del(message, command, db, user)
+    elif name in {"chart", "graph"}:
+        await reports.cmd_chart(message, db, user, today)
     elif name == "export":
         await entry.cmd_export(message, db, user, today)
     else:
