@@ -37,6 +37,12 @@ class Section:
 
 SECTIONS: tuple[Section, ...] = (
     Section(
+        key=ENGLISH,
+        title="Английский",
+        icon="🇬🇧",
+        hint="карточки и квесты по пять минут · пришли слово — переведу",
+    ),
+    Section(
         key=PRESSURE,
         title="Давление",
         icon="🩺",
@@ -47,12 +53,6 @@ SECTIONS: tuple[Section, ...] = (
         title="Деньги",
         icon="💰",
         hint="<code>кофе 300</code> · <code>такси 450 вчера</code> · <code>+90000 зарплата</code>",
-    ),
-    Section(
-        key=ENGLISH,
-        title="Английский",
-        icon="🇬🇧",
-        hint="карточки и квесты по пять минут · пришли слово — переведу",
     ),
 )
 
@@ -85,3 +85,15 @@ def section_of(key: str) -> Section:
 def topic_of(key: str) -> Section:
     """То же для тем напоминаний: у «самочувствия» раздела нет, а имя нужно."""
     return TOPICS_BY_KEY.get(key, BY_KEY[DEFAULT])
+
+
+def hidden_key(user_id: int) -> str:
+    """Где хранится, какие разделы убраны с главного экрана (через запятую)."""
+    return f"hidden_screens:{user_id}"
+
+
+#: Разовая уборка для дневников, начатых до неё: давление, деньги и
+#: самочувствие уходят с глаз, английский выходит вперёд. Ключи — экраны
+#: главного меню, значения — темы их напоминаний.
+TIDY_SCREENS = {"bp": PRESSURE, "money": MONEY, "health": HEALTH}
+TIDY_FLAG = "tidy_v1"

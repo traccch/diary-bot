@@ -41,29 +41,20 @@ from .voice import Transcriber, build_transcriber
 logger = logging.getLogger(__name__)
 
 COMMANDS = [
-    BotCommand(command="help", description="Меню: всё кнопками, без команд"),
-    BotCommand(command="menu", description="Разделы: давление, деньги, английский"),
     BotCommand(command="eng", description="Английский: карточки на 3 минуты"),
     BotCommand(command="quest", description="Английский: квест-сцена"),
-    BotCommand(command="mywords", description="Английский: мой словарь"),
     BotCommand(command="phrase", description="Английский: фраза дня"),
     BotCommand(command="say", description="Английский: сказать вслух"),
-    BotCommand(command="stats", description="Сводка текущего раздела"),
-    BotCommand(command="last", description="Последние записи"),
-    BotCommand(command="undo", description="Удалить последнюю"),
-    BotCommand(command="chart", description="График"),
-    BotCommand(command="balance", description="Баланс за месяц"),
-    BotCommand(command="export", description="Выгрузка"),
+    BotCommand(command="mywords", description="Английский: мой словарь"),
+    BotCommand(command="engstats", description="Английский: прогресс"),
+    BotCommand(command="help", description="Меню: всё кнопками, без команд"),
     BotCommand(command="remind", description="Напоминания"),
-    BotCommand(command="limit", description="Лимит на месяц"),
-    BotCommand(command="update", description="Обновить бота"),
     BotCommand(command="car", description="Пробег: сводка по машине"),
     BotCommand(command="fuel", description="Топливо: литры, цены, расход"),
+    BotCommand(command="update", description="Обновить бота"),
     BotCommand(command="status", description="Состояние бота и компьютера"),
-    BotCommand(command="proxy", description="Проверить, есть ли локальный прокси"),
     BotCommand(command="voice", description="Голосовые: состояние и установка"),
-    BotCommand(command="import", description="Загрузить операции файлом"),
-    BotCommand(command="commands", description="Список всех команд"),
+    BotCommand(command="commands", description="Все команды, включая давление и деньги"),
 ]
 
 

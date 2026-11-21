@@ -185,9 +185,33 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
         await self._conn.executescript(SCHEMA)
         if not fresh:
             await self._migrate()
+            await self._tidy_once()
         await self.sync_money_categories()
         await self.catch_up_fuel()
         await self._conn.commit()
+
+    async def _tidy_once(self) -> None:
+        """Убирает с глаз то, чем больше не пользуются, — один раз на базу.
+
+        Давление, деньги и самочувствие прячутся с главного экрана, их
+        напоминания выключаются, открытым становится английский. Записи не
+        трогаем: вернуть всё можно в «Настройки → Разделы в меню».
+        Только для уже существующих дневников: новая база начинается как
+        обычно, со всеми разделами.
+        """
+        if await self.get_meta(sections.TIDY_FLAG):
+            return
+        cur = await self.conn.execute("SELECT user_id FROM users")
+        for row in await cur.fetchall():
+            user_id = row["user_id"]
+            stored = await self.get_meta(sections.hidden_key(user_id)) or ""
+            hidden = {item for item in stored.split(",") if item} | set(sections.TIDY_SCREENS)
+            await self.set_meta(sections.hidden_key(user_id), ",".join(sorted(hidden)))
+            for topic in sections.TIDY_SCREENS.values():
+                await self.set_topic_reminders(user_id, topic, False)
+            await self.set_section(user_id, sections.ENGLISH)
+        await self.set_meta(sections.TIDY_FLAG, dt.date.today().isoformat())
+        logger.info("Разовая уборка: давление и деньги убраны с главного экрана")
 
     async def _migrate(self) -> None:
         """Дополняет уже существующую базу колонками, появившимися в SCHEMA позже.

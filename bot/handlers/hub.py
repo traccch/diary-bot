@@ -124,8 +124,7 @@ HOME_ITEMS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def hidden_key(user_id: int) -> str:
-    return f"hidden_screens:{user_id}"
+hidden_key = sections.hidden_key
 
 
 async def hidden_screens(db: Database, user_id: int) -> frozenset[str]:

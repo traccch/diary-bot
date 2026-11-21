@@ -511,3 +511,45 @@ class SessionLookTest(unittest.TestCase):
 
         self.assertIn("отлично", verdict(10, 10))
         self.assertIn("вернутся", verdict(1, 10))
+
+
+class TidyOnceTest(unittest.IsolatedAsyncioTestCase):
+    """Старый дневник: давление и деньги уходят с глаз, английский — вперёд."""
+
+    async def test_existing_diary_is_tidied_once(self):
+        from bot import sections
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / "diary.db")
+            db = Database(path, "Europe/Moscow")
+            await db.connect()
+            await db.ensure_user(USER_ID)
+            await db.add_measurement(USER_ID, 120, 80, 68, dt.datetime(2026, 8, 1, 8, 0))
+            fresh_hidden = await db.get_meta(sections.hidden_key(USER_ID))
+            await db.close()
+            self.assertFalse(fresh_hidden, "новая база начинается со всеми разделами")
+
+            db = Database(path, "Europe/Moscow")
+            await db.connect()
+            try:
+                hidden = set((await db.get_meta(sections.hidden_key(USER_ID))).split(","))
+                self.assertEqual(hidden, {"bp", "money", "health"})
+                for topic in (sections.PRESSURE, sections.MONEY, sections.HEALTH):
+                    reminders = await db.list_reminders(USER_ID, topic)
+                    self.assertTrue(reminders and not any(r.enabled for r in reminders))
+                english = await db.list_reminders(USER_ID, sections.ENGLISH)
+                self.assertTrue(all(r.enabled for r in english))
+                self.assertEqual((await db.ensure_user(USER_ID)).section, sections.ENGLISH)
+                self.assertTrue(await db.last_measurements(USER_ID), "записи на месте")
+
+                # вернул раздел сам — повторный запуск его не прячет
+                await db.set_meta(sections.hidden_key(USER_ID), "money")
+            finally:
+                await db.close()
+
+            db = Database(path, "Europe/Moscow")
+            await db.connect()
+            try:
+                self.assertEqual(await db.get_meta(sections.hidden_key(USER_ID)), "money")
+            finally:
+                await db.close()
