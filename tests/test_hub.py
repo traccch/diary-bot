@@ -106,7 +106,7 @@ class HubTest(BotTestCase):
 
     async def test_english_progress(self):
         await self.click("do:eng:stats")
-        self.assertIn("Английский", self.bot.texts[-1])
+        self.assertIn("Прогресс", self.bot.photos()[-1].caption)
 
     # ------------------------------------------------------------ настройки
 

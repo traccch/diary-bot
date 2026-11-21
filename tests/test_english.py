@@ -456,3 +456,58 @@ class PhraseStorageTest(unittest.IsolatedAsyncioTestCase):
             self.db, USER_ID, TODAY + dt.timedelta(days=1), "base"
         )
         self.assertIn("фраза дня", tomorrow)
+
+
+class ProgressPictureTest(unittest.TestCase):
+    def test_colors_grow_with_answers(self):
+        from bot.english import charts
+
+        self.assertEqual(charts.color_for(0), charts.COLOR_EMPTY)
+        shades = [charts.color_for(count) for count in (1, 10, 20, 40, 400)]
+        self.assertEqual(shades[:4], [step for _, step in charts.STEPS])
+        self.assertEqual(shades[4], charts.STEPS[-1][1])
+
+    def test_calendar_ends_with_this_week(self):
+        from bot.english import charts
+
+        start = charts.calendar_start(TODAY)
+        self.assertEqual(start.weekday(), 0)
+        self.assertEqual((TODAY - start).days // 7, charts.WEEKS - 1)
+
+    def test_next_level(self):
+        from bot.english.handlers.progress import LEVELS, next_level
+
+        self.assertEqual(next_level(0), (0, LEVELS[1]))
+        self.assertEqual(next_level(60)[0], 50)
+        self.assertIsNone(next_level(10_000)[1])
+
+    def test_picture_renders(self):
+        from bot.english import charts
+
+        if not charts.available():
+            self.skipTest("нет matplotlib")
+        days = {TODAY - dt.timedelta(days=offset): 10 for offset in range(0, 40, 2)}
+        for upcoming in ((90, "A2 — держу простой диалог"), None):
+            image = charts.progress_png(
+                charts.Snapshot(
+                    today=TODAY, days=days, learned=63, in_work=90, streak=1,
+                    level="A1", next_level=upcoming, level_floor=50,
+                    packs=[("Основа", 3, 40), ("Мои слова", 0, 2)],
+                )
+            )
+            self.assertTrue(image.startswith(b"\x89PNG"))
+
+
+class SessionLookTest(unittest.TestCase):
+    def test_progress_bar(self):
+        from bot.english.handlers.session import progress_bar
+
+        self.assertEqual(progress_bar(0, 10), "▱" * 10)
+        self.assertEqual(progress_bar(5, 10), "▰" * 5 + "▱" * 5)
+        self.assertEqual(progress_bar(3, 0), "▱" * 10)
+
+    def test_verdict(self):
+        from bot.english.handlers.session import verdict
+
+        self.assertIn("отлично", verdict(10, 10))
+        self.assertIn("вернутся", verdict(1, 10))

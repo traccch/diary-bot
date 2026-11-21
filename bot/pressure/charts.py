@@ -186,7 +186,11 @@ def _draw(
     )
 
     top.set_ylabel("мм рт. ст.")
-    top.legend(loc="upper left", frameon=False, fontsize=8, ncol=3, borderaxespad=0.2)
+    # над полем, а не на нём: внутри легенда закрывала верхние точки
+    top.legend(
+        loc="lower left", bbox_to_anchor=(0, 1.0), frameon=False, fontsize=8,
+        ncol=3, borderaxespad=0.2, handlelength=1.6,
+    )
     _style_axes(top)
 
     if bottom is not None:

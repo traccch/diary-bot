@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
+from typing import Optional
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from ...db import Database, UserSettings
-from .. import content, quests
+from .. import charts, content, quests
 from ..db import streak
 from ..keyboards import english_menu
 from ..srs import LEARNED_BOX
 
 router = Router(name="english-progress")
+logger = logging.getLogger(__name__)
 
 #: Грубая привязка выученного к уровням — чтобы прогресс был виден на глаз.
 LEVELS = (
@@ -43,6 +46,17 @@ def _bar(done: int, total: int, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def next_level(learned: int) -> tuple[int, Optional[tuple[int, str]]]:
+    """Порог текущего уровня и следующий уровень (порог, название), если он есть."""
+    floor = LEVELS[0][0]
+    for threshold, name in LEVELS:
+        if learned >= threshold:
+            floor = threshold
+        else:
+            return floor, (threshold, name)
+    return floor, None
+
+
 async def show_progress(
     message: Message, db: Database, user: UserSettings, today: dt.date
 ) -> None:
@@ -56,6 +70,48 @@ async def show_progress(
     mine = await db.eng_words(user.user_id)
     everything = len(content.CARDS) + len(mine)
 
+    by_pack: dict[str, int] = {}
+    for item in progress:
+        if item.box >= LEARNED_BOX:
+            if content.is_custom(item.item_id):
+                by_pack[content.MY_PACK.key] = by_pack.get(content.MY_PACK.key, 0) + 1
+                continue
+            card = content.card_of(item.item_id)
+            if card is not None:
+                by_pack[card.pack] = by_pack.get(card.pack, 0) + 1
+
+    packs = [
+        (pack.title, by_pack.get(pack.key, 0), len(content.cards_of_pack(pack.key)))
+        for pack in content.PACKS
+    ]
+    if mine:
+        packs.append((content.MY_PACK.title, by_pack.get(content.MY_PACK.key, 0), len(mine)))
+
+    markup = english_menu(due, quests.next_quest(done_quests) is not None)
+
+    # Короткая подпись под картинкой: всё остальное уже нарисовано.
+    caption = [f"📈 <b>Прогресс</b> · {level_of(learned)}"]
+    if day.answered:
+        caption.append(f"Сегодня: {day.answered} ответов, верных {day.correct}")
+    caption.append(f"Повторить сегодня: {due}")
+    caption.append(f"🗺 Квесты: {len(done_quests)} из {len(quests.QUESTS)}")
+    if not mine:
+        caption.append("<i>Свои слова: пришли «слово — перевод»</i>")
+
+    image = await _picture(
+        today, learned, total, row, packs, await db.eng_days_between(
+            user.user_id, charts.calendar_start(today), today
+        )
+    )
+    if image is not None:
+        await message.answer_photo(
+            BufferedInputFile(image, filename="english.png"),
+            caption="\n".join(caption),
+            reply_markup=markup,
+        )
+        return
+
+    # без matplotlib — то же самое текстом
     lines = [
         "📈 <b>Английский: прогресс</b>",
         "",
@@ -67,40 +123,38 @@ async def show_progress(
         lines.append(f"🔥 Серия: <b>{row}</b> дней")
     if day.answered:
         lines.append(f"Сегодня: {day.answered} ответов, верных {day.correct}")
-
-    by_pack: dict[str, int] = {}
-    for item in progress:
-        if item.box >= LEARNED_BOX:
-            if content.is_custom(item.item_id):
-                by_pack[content.MY_PACK.key] = by_pack.get(content.MY_PACK.key, 0) + 1
-                continue
-            card = content.card_of(item.item_id)
-            if card is not None:
-                by_pack[card.pack] = by_pack.get(card.pack, 0) + 1
-
     lines.append("")
     lines.append("<b>По темам</b>")
-    for pack in content.PACKS:
-        total_in_pack = len(content.cards_of_pack(pack.key))
-        known = by_pack.get(pack.key, 0)
-        lines.append(
-            f"{pack.icon} {pack.title}: {known}/{total_in_pack} "
-            f"{_bar(known, total_in_pack, 6)}"
-        )
-    own = content.MY_PACK
-    if mine:
-        known = by_pack.get(own.key, 0)
-        lines.append(f"{own.icon} {own.title}: {known}/{len(mine)} {_bar(known, len(mine), 6)}")
-    else:
-        lines.append(f"{own.icon} {own.title}: пока нет — пришли «слово — перевод»")
-
+    for title, known, size in packs:
+        lines.append(f"{title}: {known}/{size} {_bar(known, size, 6)}")
+    if not mine:
+        lines.append(f"{content.MY_PACK.title}: пока нет — пришли «слово — перевод»")
     lines.append("")
     lines.append(f"🗺 Квесты: {len(done_quests)} из {len(quests.QUESTS)}")
+    await message.answer("\n".join(lines), reply_markup=markup)
 
-    await message.answer(
-        "\n".join(lines),
-        reply_markup=english_menu(due, quests.next_quest(done_quests) is not None),
+
+async def _picture(today, learned, in_work, row, packs, days) -> Optional[bytes]:
+    if not charts.available():
+        return None
+    floor, upcoming = next_level(learned)
+    snapshot = charts.Snapshot(
+        today=today,
+        days=days,
+        learned=learned,
+        in_work=in_work,
+        streak=row,
+        level=level_of(learned),
+        next_level=upcoming,
+        level_floor=floor,
+        packs=packs,
     )
+    try:
+        # как и остальные графики — в том же потоке: pyplot не любит потоки
+        return charts.progress_png(snapshot)
+    except Exception:  # noqa: BLE001 - без картинки покажем текстом
+        logger.exception("Не нарисовал прогресс по английскому")
+        return None
 
 
 @router.message(Command("engstats", "progress"))

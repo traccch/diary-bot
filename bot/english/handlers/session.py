@@ -141,7 +141,11 @@ async def _ask_next(
     else:
         markup = answer_options(question.options)
         tail = ""
-    await message.answer(f"<b>{asked}/{total}</b>  {question.prompt}{tail}", reply_markup=markup)
+    await message.answer(
+        f"<code>{progress_bar(asked - 1, total)}</code>  <b>{asked}/{total}</b>\n\n"
+        f"{question.prompt}{tail}",
+        reply_markup=markup,
+    )
 
 
 async def _record(
@@ -175,6 +179,8 @@ async def _record(
         lapse=known and not correct,
     )
     await db.eng_bump_day(user.user_id, today, correct, bool(current.get("is_new")))
+    marks = list(data.get("marks") or []) + [MARK_RIGHT if correct else MARK_WRONG if known else MARK_SKIP]
+    await state.update_data(marks=marks)
     if correct:
         await state.update_data(correct=int(data.get("correct") or 0) + 1)
 
@@ -244,6 +250,7 @@ async def _finish(
     asked = int(data.get("asked") or 0)
     correct = int(data.get("correct") or 0)
     learned_before = data.get("learned_before")
+    marks = "".join(data.get("marks") or [])
     await state.clear()
 
     days = await db.eng_active_days(user.user_id)
@@ -252,11 +259,18 @@ async def _finish(
     done = await db.eng_done_quests(user.user_id)
 
     lines = [
-        "🏁 <b>Сессия закончена</b>",
+        f"🏁 <b>Сессия закончена</b> — {verdict(correct, asked)}",
         "",
-        f"Ответов: <b>{asked}</b>, верных: <b>{correct}</b>",
-        f"Слов в работе: {total} · выучено: {learned}",
     ]
+    if marks:
+        lines.append(marks)
+    lines.extend(
+        [
+            f"Верных: <b>{correct}</b> из {asked}",
+            f"Слов в работе: {total} · выучено: <b>{learned}</b>",
+            "",
+        ]
+    )
     if row > 1:
         lines.append(f"🔥 Серия: <b>{row}</b> дней подряд")
     elif row == 1:
@@ -266,6 +280,32 @@ async def _finish(
     await message.answer(
         "\n".join(lines), reply_markup=after_session(quests.next_quest(done) is not None)
     )
+
+
+MARK_RIGHT = "🟩"
+MARK_WRONG = "🟥"
+MARK_SKIP = "⬜"
+
+
+def progress_bar(done: int, total: int, width: int = 10) -> str:
+    """Полоса «сколько уже пройдено» над вопросом."""
+    if total <= 0:
+        return "▱" * width
+    filled = max(0, min(width, round(done / total * width)))
+    return "▰" * filled + "▱" * (width - filled)
+
+
+def verdict(correct: int, asked: int) -> str:
+    if not asked:
+        return "ничего не спросил"
+    share = correct / asked
+    if share >= 0.9:
+        return "отлично 🎯"
+    if share >= 0.7:
+        return "хорошо 👍"
+    if share >= 0.4:
+        return "нормально, слова держатся"
+    return "трудные слова — они вернутся завтра"
 
 
 #: Серии, которые стоит отметить отдельно.

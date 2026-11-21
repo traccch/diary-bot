@@ -153,6 +153,20 @@ class EnglishRepo:
             return DayStats(on_date, 0, 0, 0)
         return DayStats(on_date, row["answered"], row["correct"], row["new_seen"])
 
+    async def eng_days_between(
+        self, user_id: int, start: dt.date, end: dt.date
+    ) -> dict[dt.date, int]:
+        """Сколько ответов было в каждый день периода — для календаря занятий."""
+        cur = await self.conn.execute(
+            "SELECT on_date, answered FROM eng_days"
+            " WHERE user_id = ? AND on_date BETWEEN ? AND ? AND answered > 0",
+            (user_id, start.isoformat(), end.isoformat()),
+        )
+        return {
+            dt.date.fromisoformat(row["on_date"]): row["answered"]
+            for row in await cur.fetchall()
+        }
+
     async def eng_active_days(self, user_id: int, limit: int = 400) -> list[dt.date]:
         """Дни с занятиями, от свежих к старым — по ним считается серия."""
         cur = await self.conn.execute(

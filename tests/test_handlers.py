@@ -1110,15 +1110,28 @@ class EnglishTest(BotTestCase):
         self.assertTrue(await self.db.last_transactions(USER_ID))
 
     async def test_progress_screen(self):
-        await self.send("/engstats")
-        answer = self.bot.texts[-1]
+        await self.send("/eng")
+        await self.click("eng:more")
+        await self.click("eng:idk")
+        await self.send_raw("/engstats")
+        photo = self.bot.photos()[-1]
+        self.assertIn("Прогресс", photo.caption)
+        self.assertIn("Квесты", photo.caption)
+        self.assertTrue(photo.photo.data.startswith(b"\x89PNG"))
+        self.assertIn("▶️ Карточки", [b.text for row in photo.reply_markup.inline_keyboard for b in row])
+
+    async def test_progress_falls_back_to_text(self):
+        from unittest import mock
+
+        with mock.patch("bot.english.charts.available", return_value=False):
+            answer = await self.send("/engstats")
         self.assertIn("прогресс", answer.lower())
         self.assertIn("Квесты", answer)
 
     async def test_stats_command_works_in_section(self):
         await self.to_english()
-        await self.send("/stats")
-        self.assertIn("Английский", self.bot.texts[-1])
+        await self.send_raw("/stats")
+        self.assertIn("Прогресс", self.bot.photos()[-1].caption)
 
 
 class HiddenSectionsTest(BotTestCase):
