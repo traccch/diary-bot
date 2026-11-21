@@ -407,7 +407,7 @@ VPN-приложение стоит только на телефоне.
 Забери папку через `git clone` — тогда бот сможет обновляться сам:
 
 ```bash
-git clone https://github.com/traccch/222.git diary-bot
+git clone https://github.com/traccch/diary-bot.git
 cd diary-bot
 ./run.sh            # macOS и Linux
 ```
