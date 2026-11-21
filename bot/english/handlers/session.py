@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+from typing import Optional
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -20,7 +21,7 @@ from aiogram.types import CallbackQuery, Message
 from ...db import Database, UserSettings
 from .. import content, quests, srs
 from ..db import streak
-from ..keyboards import after_card, after_session, answer_options, english_menu
+from ..keyboards import after_card, after_session, answer_options, english_menu, type_answer
 from .progress import level_of
 
 router = Router(name="english-session")
@@ -127,36 +128,40 @@ async def _ask_next(
             "correct": question.correct,
             "hint": question.hint,
             "is_new": progress is None,
+            "kind": question.kind,
         },
     )
 
     asked = int(data.get("asked") or 0) + 1
     total = asked + len(queue)
     await state.update_data(asked=asked)
-    await message.answer(
-        f"<b>{asked}/{total}</b>  {question.prompt}",
-        reply_markup=answer_options(question.options),
-    )
+    if question.kind == srs.TYPE:
+        markup = type_answer()
+        tail = "\n\n<i>Напечатай ответ сообщением.</i>"
+    else:
+        markup = answer_options(question.options)
+        tail = ""
+    await message.answer(f"<b>{asked}/{total}</b>  {question.prompt}{tail}", reply_markup=markup)
 
 
-async def _grade(
-    callback: CallbackQuery,
+async def _record(
     db: Database,
     user: UserSettings,
     today: dt.date,
     state: FSMContext,
-    chosen: int,
-) -> None:
+    known: bool,
+    correct: bool,
+    head: str = "",
+) -> Optional[str]:
+    """Записывает ответ на текущую карточку и возвращает разбор. None — карточки нет."""
     data = await state.get_data()
     current = data.get("current")
     if not current:
-        await callback.answer()
-        return
+        return None
+    # ответ принят — повторное нажатие или второе сообщение его не задвоят
+    await state.update_data(current=None)
 
     item_id = current["item_id"]
-    known = chosen >= 0
-    correct = known and chosen == current["correct"]
-
     progress = await db.eng_progress_of(user.user_id, item_id)
     box = progress.box if progress else 0
     # «Не знаю» не считается ошибкой: карточка просто остаётся на месте.
@@ -174,13 +179,14 @@ async def _grade(
         await state.update_data(correct=int(data.get("correct") or 0) + 1)
 
     card = await db.eng_card(user.user_id, item_id)
-    if correct:
-        head = "✅ <b>Верно</b>"
-    elif known:
-        right = current["options"][current["correct"]]
-        head = f"❌ <b>Нет</b> — правильно: <b>{right}</b>"
-    else:
-        head = "🤷 <b>Ничего страшного</b>"
+    if not head:
+        if correct:
+            head = "✅ <b>Верно</b>"
+        elif known:
+            right = current["options"][current["correct"]]
+            head = f"❌ <b>Нет</b> — правильно: <b>{right}</b>"
+        else:
+            head = "🤷 <b>Ничего страшного</b>"
 
     body = [head, ""]
     if card is not None:
@@ -189,10 +195,46 @@ async def _grade(
             body.append(f"<i>{card.example}</i>")
         if card.example_ru:
             body.append(f"<i>{card.example_ru}</i>")
+    return "\n".join(body)
 
+
+async def _grade(
+    callback: CallbackQuery,
+    db: Database,
+    user: UserSettings,
+    today: dt.date,
+    state: FSMContext,
+    chosen: int,
+) -> None:
+    current = (await state.get_data()).get("current")
+    known = chosen >= 0
+    correct = bool(current) and known and chosen == current["correct"]
+    body = await _record(db, user, today, state, known, correct)
     await callback.answer()
-    if isinstance(callback.message, Message):
-        await callback.message.edit_text("\n".join(body), reply_markup=after_card())
+    if body is not None and isinstance(callback.message, Message):
+        await callback.message.edit_text(body, reply_markup=after_card())
+
+
+async def grade_typed(
+    message: Message, db: Database, user: UserSettings, today: dt.date, state: FSMContext
+) -> bool:
+    """Напечатанный ответ на карточку «напиши сам». False — сейчас такой не ждём."""
+    current = (await state.get_data()).get("current")
+    if not current or current.get("kind") != srs.TYPE:
+        return False
+
+    right = current["options"][0]
+    verdict = srs.check_typed(right, message.text or "")
+    if verdict == srs.EXACT:
+        head = "✅ <b>Верно</b>"
+    elif verdict == srs.TYPO:
+        head = f"✅ <b>Засчитал</b> — с опечаткой, правильно: <b>{right}</b>"
+    else:
+        head = f"❌ <b>Нет</b> — правильно: <b>{right}</b>"
+    body = await _record(db, user, today, state, True, verdict is not None, head)
+    if body is not None:
+        await message.answer(body, reply_markup=after_card())
+    return True
 
 
 async def _finish(
@@ -306,13 +348,15 @@ async def on_text_mid_session(
     now: dt.datetime,
     state: FSMContext,
 ) -> None:
-    """Посреди карточек прислали текст — чаще всего слово из игры. Не молчим.
+    """Посреди карточек прислали текст: ответ на «напиши сам» или слово из игры.
 
     Сессию закрываем (ответы уже записаны), а текст разбираем как обычное
     сообщение: слово переведётся или добавится, давление запишется.
     """
     from ...handlers.router import free_text_like  # там же подключён и этот роутер
 
+    if await grade_typed(message, db, user, now.date(), state):
+        return
     await state.clear()
     await free_text_like(message, message.text or "", db, user, now)
 

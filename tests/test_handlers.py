@@ -219,6 +219,9 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
         await self.dp.storage.set_state(key, None)
         await self.dp.storage.set_data(key, {})
 
+    def key(self) -> StorageKey:
+        return StorageKey(bot_id=self.bot.id, chat_id=CHAT_ID, user_id=USER_ID)
+
     async def asyncTearDown(self):
         await self.bot.session.close()
         await self.db.close()
@@ -937,12 +940,15 @@ class EnglishTest(BotTestCase):
         # ответим наверняка неверно: берём вариант, который не совпал бы
         question = self.bot.texts[-1]
         buttons = self.bot.last_buttons
-        wrong = next(
-            index
-            for index, text in enumerate(buttons)
-            if text not in question and text != "🤷 Не знаю"
-        )
-        await self.click(f"eng:a:{wrong}")
+        if "Напиши по-английски" in question:
+            await self.send("xyzzy")  # карточка «напиши сам»: отвечаем текстом
+        else:
+            wrong = next(
+                index
+                for index, text in enumerate(buttons)
+                if text not in question and text != "🤷 Не знаю"
+            )
+            await self.click(f"eng:a:{wrong}")
 
         touched = [item for item in await self.db.eng_progress(USER_ID) if item.seen]
         self.assertTrue(touched)
@@ -1016,6 +1022,79 @@ class EnglishTest(BotTestCase):
         await self.send("/mywords")
         self.assertIn("loot", self.bot.texts[-1])
 
+    async def test_typed_answer_is_graded(self):
+        from unittest import mock
+
+        from bot.english import srs
+
+        await self.db.ensure_user(USER_ID)
+        await self.db.eng_save_answer(USER_ID, "games:loot", 3, self.today(), True, False)
+        with mock.patch.object(srs, "kind_for", return_value=srs.TYPE):
+            await self.send("/eng")
+            await self.click("eng:more")
+            self.assertIn("Напиши по-английски", self.bot.texts[-1])
+            self.assertEqual(self.bot.last_buttons, ["🤷 Не знаю"])
+            answer = await self.send("Loot")
+        self.assertIn("Верно", answer)
+        self.assertEqual((await self.db.eng_progress_of(USER_ID, "games:loot")).box, 4)
+
+    async def test_phrase_of_the_day(self):
+        first = await self.send("/phrase")
+        self.assertIn("Фраза дня", first)
+        self.assertEqual(await self.send("/phrase"), first, "за день фраза не меняется")
+        self.assertIn("📚 В карточки", self.bot.last_buttons)
+
+    async def test_speaking_checks_the_voice(self):
+        from unittest import mock
+
+        class Ready:
+            ready = True
+
+            async def transcribe(self, audio, language=None):
+                return ""
+
+        self.dp["transcriber"] = Ready()
+        await self.send("/say")
+        self.assertIn("Скажи вслух", self.bot.texts[-1])
+        target = (await self.dp.storage.get_data(self.key()))["target"]
+
+        async def heard(message, bot, transcriber, language=None):
+            self.assertEqual(language, "en")
+            return target
+
+        with mock.patch("bot.handlers.router.hear", heard):
+            await self.send_voice()
+        self.assertIn("Чисто", self.bot.edits[-1])
+
+        # текст вместо голоса — выходим из режима и разбираем как обычно
+        await self.send("120/80 68")
+        self.assertTrue(await self.db.last_measurements(USER_ID))
+
+    async def test_quest_words_go_to_cards(self):
+        await self.send("/quest")
+        await self.click("eq:go:tavern")
+        for _ in range(3):
+            await self.click("eq:a:1")
+            await self.click("eq:next")
+        self.assertIn("📚 Слова из сцены — в карточки", self.bot.last_buttons)
+
+        await self.click("eq:learn:tavern")
+        self.assertIn("В карточки ушло", self.bot.texts[-1])
+        mine = {card.en: card for card in await self.db.eng_words(USER_ID)}
+        self.assertIn("rumors", mine["rumor"].example)
+        for card in mine.values():
+            self.assertIsNotNone(await self.db.eng_progress_of(USER_ID, card.id))
+
+    async def test_all_quests_done_offers_replay(self):
+        from bot.english import quests
+
+        for quest in quests.QUESTS:
+            await self.db.eng_finish_quest(USER_ID, quest.id, self.today(), 3)
+        await self.send("/quest")
+        self.assertIn(f"все {len(quests.QUESTS)}", self.bot.texts[-1])
+        await self.click("eq:open:heist")
+        self.assertIn("Слова, которые встретятся", self.bot.texts[-1])
+
     async def test_expense_with_dash_stays_an_expense(self):
         await self.to_english()
         await self.send("taxi — 300")
@@ -1040,6 +1119,38 @@ class EnglishTest(BotTestCase):
         await self.to_english()
         await self.send("/stats")
         self.assertIn("Английский", self.bot.texts[-1])
+
+
+class HiddenSectionsTest(BotTestCase):
+    """Ненужный раздел можно убрать с главного экрана вместе с напоминаниями."""
+
+    async def test_hide_and_bring_back(self):
+        await self.send("/start")
+        self.assertIn("🩺 Давление", self.bot.last_buttons)
+        before = await self.db.list_reminders(USER_ID, "pressure")
+        self.assertTrue(before and all(item.enabled for item in before))
+
+        await self.click("do:set:sections")
+        await self.click("hide:bp")
+        await self.click("hide:money")
+        await self.send("/help")
+        self.assertNotIn("🩺 Давление", self.bot.last_buttons)
+        self.assertNotIn("💰 Деньги", self.bot.last_buttons)
+        self.assertIn("🇬🇧 Английский", self.bot.last_buttons)
+        self.assertTrue(
+            all(not item.enabled for item in await self.db.list_reminders(USER_ID, "pressure"))
+        )
+
+        # данные никуда не делись: давление всё так же пишется текстом
+        await self.send("120/80 68")
+        self.assertTrue(await self.db.last_measurements(USER_ID))
+
+        await self.click("hide:bp")
+        await self.send("/help")
+        self.assertIn("🩺 Давление", self.bot.last_buttons)
+        self.assertTrue(
+            all(item.enabled for item in await self.db.list_reminders(USER_ID, "pressure"))
+        )
 
 
 class ClockDisciplineTest(unittest.TestCase):

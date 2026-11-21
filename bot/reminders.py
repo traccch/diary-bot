@@ -18,6 +18,7 @@ from aiogram.exceptions import TelegramAPIError
 from . import pending, prompts, sections
 from .db import Database
 from .car.handlers import entry_actions as car_actions
+from .english import phrase
 from .keyboards import health_prompt, reminder_actions
 
 logger = logging.getLogger(__name__)
@@ -197,7 +198,13 @@ class ReminderScheduler:
                 continue
 
             text = REMINDER_TEXTS.get(candidate.topic, REMINDER_TEXTS[sections.PRESSURE])
-            sent += await self._send(candidate.user_id, text, candidate.topic)
+            markup = None
+            if candidate.topic == sections.ENGLISH:
+                # первое за день напоминание несёт ещё и фразу дня
+                text, markup = await phrase.reminder_text(
+                    self._db, candidate.user_id, now.date(), text
+                )
+            sent += await self._send(candidate.user_id, text, candidate.topic, markup)
 
         return sent
 

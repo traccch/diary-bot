@@ -18,6 +18,13 @@ def answer_options(options: Sequence[str]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def type_answer() -> InlineKeyboardMarkup:
+    """Под вопросом «напиши сам» вариантов нет — только честное «не знаю»."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🤷 Не знаю", callback_data="eng:idk")]]
+    )
+
+
 def after_card() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="▶️ Дальше", callback_data="eng:next")]]
@@ -42,6 +49,8 @@ def english_menu(due: int, has_quest: bool) -> InlineKeyboardMarkup:
     if has_quest:
         builder.button(text="🗺 Квест", callback_data="eng:quest")
     builder.button(text="📈 Прогресс", callback_data="eng:stats")
+    builder.button(text="💬 Фраза дня", callback_data="eng:phrase")
+    builder.button(text="🎙 Сказать вслух", callback_data="eng:say")
     builder.button(text="📝 Мои слова", callback_data="eng:mine")
     builder.adjust(2)
     return builder.as_markup()

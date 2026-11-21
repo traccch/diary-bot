@@ -353,3 +353,106 @@ class DefaultRemindersTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TypedAnswerTest(unittest.TestCase):
+    def test_exact_ignores_case_and_punctuation(self):
+        self.assertEqual(srs.check_typed("I'm down", "i’m down."), srs.EXACT)
+        self.assertEqual(srs.check_typed("low-key", "low key"), srs.EXACT)
+
+    def test_small_typo_counts(self):
+        self.assertEqual(srs.check_typed("respawn", "respwn"), srs.TYPO)
+        self.assertEqual(srs.check_typed("ghosted", "gosted"), srs.TYPO)
+
+    def test_wrong_or_short(self):
+        self.assertIsNone(srs.check_typed("bet", "bat"), "в коротком слове опечаток нет")
+        self.assertIsNone(srs.check_typed("respawn", "reload"))
+        self.assertIsNone(srs.check_typed("loot", ""))
+
+    def test_type_question_for_familiar_words(self):
+        progress = srs.Progress("games:loot", srs.TYPE_FROM_BOX, TODAY, 3, 3, 0)
+        kinds = {srs.kind_for(progress, random.Random(seed)) for seed in range(40)}
+        self.assertIn(srs.TYPE, kinds)
+        fresh = srs.Progress("games:loot", 0, TODAY, 1, 0, 0)
+        self.assertNotIn(
+            srs.TYPE, {srs.kind_for(fresh, random.Random(seed)) for seed in range(40)}
+        )
+
+    def test_type_question_shape(self):
+        card = content.BY_ID["talk:my-bad"]
+        question = srs.make_question(card, srs.TYPE)
+        self.assertEqual(question.options, (card.en,))
+        self.assertIn(card.ru, question.prompt)
+        self.assertNotIn("My bad", question.prompt, "ответ не подсказываем")
+
+
+class PhraseTest(unittest.TestCase):
+    def test_same_phrase_all_day(self):
+        from bot.english import phrase
+
+        self.assertEqual(phrase.pick(TODAY, []), phrase.pick(TODAY, []))
+        self.assertIn(phrase.pick(TODAY, []).pack, phrase.PACKS)
+
+    def test_prefers_what_is_not_studied(self):
+        from bot.english import phrase
+
+        pool = [card.id for card in content.CARDS if card.pack in phrase.PACKS]
+        keep = pool[0]
+        self.assertEqual(phrase.pick(TODAY, pool[1:]).id, keep)
+
+
+class SpeakCompareTest(unittest.TestCase):
+    def test_clean_read(self):
+        from bot.english.speak import compare
+
+        verdict = compare("My bad, I missed your call.", "my bad I missed your call")
+        self.assertEqual(verdict.score, 1.0)
+        self.assertNotIn("<u>", verdict.marked)
+
+    def test_missed_words_are_marked(self):
+        from bot.english.speak import compare
+
+        verdict = compare("Hang on, I'll be right back.", "hang on I be right back")
+        self.assertLess(verdict.score, 1.0)
+        self.assertIn("<u>I'll</u>", verdict.marked)
+        self.assertIn("Hang", verdict.marked)
+
+
+class QuestLinesTest(unittest.TestCase):
+    def test_line_with_word_has_no_markup(self):
+        line = quests.line_with(quests.BY_ID["tavern"], "rumor")
+        self.assertIn("rumors", line)
+        self.assertNotIn("<b>", line)
+        self.assertEqual(quests.line_with(quests.BY_ID["tavern"], "zzz"), "")
+
+
+class PhraseStorageTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.db = memory_db()
+        await self.db.connect()
+        await self.db.ensure_user(USER_ID)
+
+    async def asyncTearDown(self):
+        await self.db.close()
+
+    async def test_phrase_stays_after_adding_it(self):
+        from bot.english import phrase
+
+        card, first = await phrase.phrase_of_day(self.db, USER_ID, TODAY)
+        self.assertTrue(first)
+        await self.db.eng_save_answer(USER_ID, card.id, 0, TODAY, False, False)
+        again, first = await phrase.phrase_of_day(self.db, USER_ID, TODAY)
+        self.assertEqual((again.id, first), (card.id, False))
+
+    async def test_reminder_carries_phrase_once_a_day(self):
+        from bot.english import phrase
+
+        text, markup = await phrase.reminder_text(self.db, USER_ID, TODAY, "base")
+        self.assertIn("фраза дня", text)
+        self.assertIsNotNone(markup)
+        text, markup = await phrase.reminder_text(self.db, USER_ID, TODAY, "base")
+        self.assertEqual((text, markup), ("base", None))
+        tomorrow, _ = await phrase.reminder_text(
+            self.db, USER_ID, TODAY + dt.timedelta(days=1), "base"
+        )
+        self.assertIn("фраза дня", tomorrow)

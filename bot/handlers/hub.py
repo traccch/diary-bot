@@ -90,6 +90,9 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         (
             ("▶️ Карточки на 3 минуты", "do:eng:cards"),
             ("🎮 Квест", "do:eng:quest"),
+            ("💬 Фраза дня", "eng:phrase"),
+            ("🎙 Сказать вслух", "eng:say"),
+            ("📝 Мои слова", "eng:mine"),
             ("📈 Прогресс", "do:eng:stats"),
         ),
     ),
@@ -97,6 +100,7 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         "⚙️ <b>Настройки</b>",
         (
             ("⏰ Напоминания", "do:set:remind"),
+            ("👁 Разделы в меню", "do:set:sections"),
             ("🎯 Цель по давлению", "do:set:target"),
             ("🌍 Часовой пояс", "do:set:tz"),
             ("⬇️ Обновить бота", "do:set:update"),
@@ -110,19 +114,79 @@ SCREENS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
 }
 
 
-def home_keyboard():
+#: Кнопки главного экрана: (экран, подпись, тема напоминаний).
+HOME_ITEMS: tuple[tuple[str, str, str], ...] = (
+    ("bp", "🩺 Давление", sections.PRESSURE),
+    ("money", "💰 Деньги", sections.MONEY),
+    ("health", "🫀 Самочувствие", sections.HEALTH),
+    ("eng", "🇬🇧 Английский", sections.ENGLISH),
+    ("car", "🚗 Пробег", sections.CAR),
+)
+
+
+def hidden_key(user_id: int) -> str:
+    return f"hidden_screens:{user_id}"
+
+
+async def hidden_screens(db: Database, user_id: int) -> frozenset[str]:
+    """Что убрано с главного экрана. Данные никуда не деваются — только кнопка."""
+    stored = await db.get_meta(hidden_key(user_id)) or ""
+    return frozenset(item for item in stored.split(",") if item)
+
+
+def home_keyboard(hidden: frozenset[str] = frozenset()):
     builder = InlineKeyboardBuilder()
-    for text, data in (
-        ("🩺 Давление", "do:bp"),
-        ("💰 Деньги", "do:money"),
-        ("🫀 Самочувствие", "do:health"),
-        ("🇬🇧 Английский", "do:eng"),
-        ("🚗 Пробег", "do:car"),
-        ("⚙️ Настройки", "do:settings"),
-    ):
-        builder.button(text=text, callback_data=data)
-    builder.adjust(2, 2, 2)
+    for name, text, _ in HOME_ITEMS:
+        if name not in hidden:
+            builder.button(text=text, callback_data=f"do:{name}")
+    builder.button(text="⚙️ Настройки", callback_data="do:settings")
+    builder.adjust(2)
     return builder.as_markup()
+
+
+def sections_keyboard(hidden: frozenset[str]):
+    builder = InlineKeyboardBuilder()
+    for name, text, _ in HOME_ITEMS:
+        mark = "🚫" if name in hidden else "✅"
+        builder.button(text=f"{mark} {text}", callback_data=f"hide:{name}")
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="← В меню", callback_data="do:home"))
+    return builder.as_markup()
+
+
+SECTIONS_TEXT = (
+    "👁 <b>Разделы в меню</b>\n\n"
+    "Нажми, чтобы убрать раздел с главного экрана или вернуть его.\n"
+    "<i>Записи никуда не деваются, а цифры по-прежнему узнаются из текста. "
+    "У скрытого раздела выключаются и напоминания — вернёшь раздел, "
+    "вернутся и они.</i>"
+)
+
+
+@router.callback_query(F.data.startswith("hide:"))
+async def cb_hide(callback: CallbackQuery, db: Database, user: UserSettings) -> None:
+    name = (callback.data or "").split(":", 1)[1]
+    topics = {item[0]: item[2] for item in HOME_ITEMS}
+    if name not in topics:
+        await callback.answer()
+        return
+    hidden = set(await hidden_screens(db, user.user_id))
+    if name in hidden:
+        hidden.discard(name)
+        note = "Вернул в меню"
+    else:
+        hidden.add(name)
+        note = "Убрал из меню"
+    await db.set_meta(hidden_key(user.user_id), ",".join(sorted(hidden)))
+    await db.set_topic_reminders(user.user_id, topics[name], name not in hidden)
+    await callback.answer(note)
+    if isinstance(callback.message, Message):
+        try:
+            await callback.message.edit_text(
+                SECTIONS_TEXT, reply_markup=sections_keyboard(frozenset(hidden))
+            )
+        except TelegramBadRequest:
+            pass
 
 
 def screen_keyboard(name: str):
@@ -134,21 +198,25 @@ def screen_keyboard(name: str):
     return builder.as_markup()
 
 
-async def show_home(message: Message, edit: bool = False) -> None:
+async def show_home(
+    message: Message, hidden: frozenset[str] = frozenset(), edit: bool = False
+) -> None:
     if edit:
         try:
-            await message.edit_text(HOME, reply_markup=home_keyboard())
+            await message.edit_text(HOME, reply_markup=home_keyboard(hidden))
             return
         except TelegramBadRequest:
             pass
-    await message.answer(HOME, reply_markup=home_keyboard())
+    await message.answer(HOME, reply_markup=home_keyboard(hidden))
 
 
 @router.callback_query(F.data == "do:home")
-async def cb_home(callback: CallbackQuery) -> None:
+async def cb_home(callback: CallbackQuery, db: Database, user: UserSettings) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
-        await show_home(callback.message, edit=True)
+        await show_home(
+            callback.message, await hidden_screens(db, user.user_id), edit=True
+        )
 
 
 @router.callback_query(F.data.in_({f"do:{name}" for name in SCREENS}))
@@ -346,7 +414,12 @@ async def cb_settings(
 
     await callback.answer()
 
-    if action == "remind":
+    if action == "sections":
+        await message.answer(
+            SECTIONS_TEXT,
+            reply_markup=sections_keyboard(await hidden_screens(db, user.user_id)),
+        )
+    elif action == "remind":
         reminders = await db.list_reminders(user.user_id)
         await message.answer(
             _list_text(user, reminders),

@@ -418,6 +418,15 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
         await self.conn.commit()
         return cur.rowcount
 
+    async def set_topic_reminders(self, user_id: int, topic: str, enabled: bool) -> int:
+        """Включает или выключает все напоминания темы разом. Возвращает их число."""
+        cur = await self.conn.execute(
+            "UPDATE reminders SET enabled = ? WHERE user_id = ? AND topic = ?",
+            (int(enabled), user_id, topic),
+        )
+        await self.conn.commit()
+        return cur.rowcount
+
     async def mark_reminder_fired(self, reminder_id: int, on: dt.date) -> None:
         await self.conn.execute(
             "UPDATE reminders SET last_fired_on = ? WHERE id = ?", (on.isoformat(), reminder_id)

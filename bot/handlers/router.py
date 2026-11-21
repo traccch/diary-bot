@@ -12,6 +12,7 @@ import datetime as dt
 import logging
 
 import tempfile
+from typing import Optional
 from pathlib import Path
 
 from aiogram import Bot, F, Router
@@ -123,23 +124,33 @@ async def voice_message(
         return
 
     note = await message.answer("🎤 Слушаю…")
+    heard = await hear(message, bot, transcriber)
+    if heard is None:
+        return
+    text = clean_speech(heard)
+
+    logger.info("Расшифровал голосовое: %r", text)
+    await note.edit_text(f"🎤 <i>Расслышал:</i> {text}")
+    await free_text_like(message, text, db, user, now)
+
+
+async def hear(
+    message: Message, bot: Bot, transcriber: Transcriber, language: Optional[str] = None
+) -> Optional[str]:
+    """Скачивает голосовое и расшифровывает. None — не вышло, человеку уже ответили."""
+    voice: Voice = message.voice
     with tempfile.TemporaryDirectory() as tmp:
         audio = Path(tmp) / "voice.oga"
         try:
             file = await bot.get_file(voice.file_id)
             await bot.download_file(file.file_path, destination=str(audio))
-            text = clean_speech(await transcriber.transcribe(audio))
+            return await transcriber.transcribe(audio, language=language)
         except TranscribeError as exc:
             await message.answer(f"🎤 Не получилось: {exc}")
-            return
         except Exception:  # noqa: BLE001 - голос не должен ронять диалог
             logger.exception("Сбой при расшифровке голосового")
             await message.answer("🎤 Не получилось расшифровать. Напиши текстом.")
-            return
-
-    logger.info("Расшифровал голосовое: %r", text)
-    await note.edit_text(f"🎤 <i>Расслышал:</i> {text}")
-    await free_text_like(message, text, db, user, now)
+    return None
 
 
 async def try_answer(

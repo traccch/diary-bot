@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import html
 import random
 import re
 from dataclasses import dataclass
@@ -33,6 +34,11 @@ SESSION_SIZE = 10
 RECOGNIZE = "recognize"  # английское слово → перевод
 RECALL = "recall"  # перевод → английское слово
 CLOZE = "cloze"  # пропуск в предложении
+TYPE = "type"  # перевод → напечатать слово самому
+
+#: С какой коробки слово можно спрашивать «напиши сам»: узнавать его
+#: уже умеешь, теперь надо уметь сказать.
+TYPE_FROM_BOX = 2
 
 
 @dataclass(frozen=True)
@@ -96,6 +102,22 @@ def make_question(
     if kind == CLOZE and not card.example:
         kind = RECALL  # своё слово без примера: пропуск подставлять некуда
 
+    if kind == TYPE:
+        prompt = f"✍️ Напиши по-английски: <b>{card.ru}</b>"
+        if card.example:
+            gap = "…" * 3
+            hidden = re.sub(re.escape(card.en), gap, card.example, 1, re.IGNORECASE)
+            if gap in hidden:
+                prompt += f"\n\n<i>{hidden}</i>"
+        return Question(
+            item_id=card.id,
+            kind=kind,
+            prompt=prompt,
+            options=(card.en,),
+            correct=0,
+            hint=f"{card.en} — {card.ru}",
+        )
+
     if kind == RECALL:
         prompt = f"Как по-английски <b>{card.ru}</b>?"
         right, field = card.en, "en"
@@ -130,9 +152,49 @@ def kind_for(progress: Optional[Progress], rng: Optional[random.Random] = None) 
     rng = rng or random.Random()
     if progress is None or progress.seen == 0:
         return RECOGNIZE
-    if progress.box <= 1:
+    if progress.box < TYPE_FROM_BOX:
         return rng.choice([RECOGNIZE, RECALL])
-    return rng.choice([RECALL, CLOZE])
+    return rng.choice([RECALL, CLOZE, TYPE])
+
+
+EXACT = "exact"
+TYPO = "typo"
+
+_NOT_LETTERS = re.compile(r"[^\w' -]+")
+
+
+def _normalize(text: str) -> str:
+    text = html.unescape(text).lower().replace("’", "'").replace("`", "'")
+    text = _NOT_LETTERS.sub(" ", text)
+    return " ".join(text.replace("-", " ").split())
+
+
+def _distance(left: str, right: str) -> int:
+    """Расстояние Левенштейна — сколько букв поправить, чтобы совпало."""
+    previous = list(range(len(right) + 1))
+    for i, a in enumerate(left, 1):
+        current = [i]
+        for j, b in enumerate(right, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a != b)))
+        previous = current
+    return previous[-1]
+
+
+def check_typed(answer: str, typed: str) -> Optional[str]:
+    """Сверяет напечатанное: EXACT, TYPO (одна-две опечатки) или None.
+
+    Регистр, апостроф ’ вместо ' и точка в конце — не ошибки. Опечатка
+    засчитывается: проверяем, помнишь ли слово, а не печать на телефоне.
+    """
+    want, got = _normalize(answer), _normalize(typed)
+    if not got:
+        return None
+    if want == got:
+        return EXACT
+    allowed = 0 if len(want) < 4 else 1 if len(want) < 8 else 2
+    if allowed and _distance(want, got) <= allowed:
+        return TYPO
+    return None
 
 
 def build_session(

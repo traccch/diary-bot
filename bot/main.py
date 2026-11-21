@@ -46,6 +46,8 @@ COMMANDS = [
     BotCommand(command="eng", description="Английский: карточки на 3 минуты"),
     BotCommand(command="quest", description="Английский: квест-сцена"),
     BotCommand(command="mywords", description="Английский: мой словарь"),
+    BotCommand(command="phrase", description="Английский: фраза дня"),
+    BotCommand(command="say", description="Английский: сказать вслух"),
     BotCommand(command="stats", description="Сводка текущего раздела"),
     BotCommand(command="last", description="Последние записи"),
     BotCommand(command="undo", description="Удалить последнюю"),

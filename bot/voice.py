@@ -38,7 +38,7 @@ class Transcriber(Protocol):
     @property
     def ready(self) -> bool: ...
 
-    async def transcribe(self, audio: Path) -> str: ...
+    async def transcribe(self, audio: Path, language: Optional[str] = None) -> str: ...
 
 
 #: Куда установщик кладёт распознаватель. Если он там есть, настраивать
@@ -139,7 +139,8 @@ class WhisperCppTranscriber:
             return "не нашёл ffmpeg — без него голосовые не перекодировать"
         return ""
 
-    async def transcribe(self, audio: Path) -> str:
+    async def transcribe(self, audio: Path, language: Optional[str] = None) -> str:
+        """`language` — язык речи: по умолчанию из настроек, для английского «en»."""
         if not self.ready:
             raise TranscribeError(self.why_not_ready())
 
@@ -154,7 +155,7 @@ class WhisperCppTranscriber:
                     self._config.binary,
                     "-m", self._config.model,
                     "-f", str(wav),
-                    "-l", self._config.language,
+                    "-l", language or self._config.language,
                     "-nt",          # без таймкодов
                     "-np",          # без служебного вывода
                     "-t", str(max(1, (os.cpu_count() or 2) - 1)),
@@ -196,7 +197,9 @@ class DisabledTranscriber:
     def why_not_ready(self) -> str:
         return "распознавание речи не настроено (VOICE_BINARY и VOICE_MODEL в .env)"
 
-    async def transcribe(self, audio: Path) -> str:  # pragma: no cover - не вызывается
+    async def transcribe(  # pragma: no cover - не вызывается
+        self, audio: Path, language: Optional[str] = None
+    ) -> str:
         raise TranscribeError(self.why_not_ready())
 
 

@@ -9,7 +9,7 @@ from aiogram.filters import CommandObject
 from aiogram.types import Message
 
 from ...db import Database, UserSettings
-from .. import lookup
+from .. import lookup, phrase, speak
 from . import progress, quest, session
 
 
@@ -19,6 +19,8 @@ def build_router() -> Router:
     router.include_router(quest.router)
     router.include_router(progress.router)
     router.include_router(lookup.router)
+    router.include_router(phrase.router)
+    router.include_router(speak.router)
     return router
 
 

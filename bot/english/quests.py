@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -377,9 +378,112 @@ QUESTS: tuple[Quest, ...] = (
             ),
         ),
     ),
+    Quest(
+        id="survival",
+        title="Ночь выживания",
+        icon="🧟",
+        setting="Выживание после катастрофы. Ночь, заброшенная заправка, рация шипит.",
+        vocab=(
+            ("supplies", "припасы"),
+            ("barricade", "забаррикадировать"),
+            ("run low", "заканчиваться"),
+            ("hold out", "продержаться"),
+        ),
+        scene=(
+            "<b>Radio:</b> Anyone out there? This is Maya. We're at the old gas station.",
+            "<b>You:</b> I hear you. How bad is it?",
+            "<b>Maya:</b> We barricaded the doors, but supplies are running low. "
+            "Water for a day, maybe two.",
+            "<b>You:</b> Can you hold out till morning? They're slower in daylight.",
+            "<b>Maya:</b> We'll try. Just don't come at night — it's not worth it.",
+        ),
+        questions=(
+            Question(
+                "Что Майя сделала с дверями?",
+                ("Сломала", "Забаррикадировала", "Оставила открытыми"),
+                1,
+                "«We barricaded the doors» — забаррикадировали двери.",
+            ),
+            Question(
+                "Насколько хватит воды?",
+                ("На неделю", "На день-два", "Её уже нет"),
+                1,
+                "«Water for a day, maybe two» — на день, может на два.",
+            ),
+            Question(
+                "Почему лучше прийти утром?",
+                (
+                    "Днём они медленнее",
+                    "Утром откроется магазин",
+                    "Ночью сломается рация",
+                ),
+                0,
+                "«They're slower in daylight» — при дневном свете они медленнее.",
+            ),
+        ),
+    ),
+    Quest(
+        id="space",
+        title="Сбой на станции",
+        icon="🚀",
+        setting="Космическая станция. Ты на дежурстве, а бортовой компьютер нервничает.",
+        vocab=(
+            ("hull", "корпус (корабля)"),
+            ("breach", "пробоина"),
+            ("seal off", "перекрыть, изолировать"),
+            ("abort", "отменить (операцию)"),
+        ),
+        scene=(
+            "<b>Computer:</b> Warning. Hull breach detected in section four.",
+            "<b>You:</b> Is anyone in there?",
+            "<b>Computer:</b> One crew member. Oxygen at thirty percent and dropping.",
+            "<b>You:</b> Don't seal off the section yet. Give her two minutes to get out.",
+            "<b>Computer:</b> Two minutes. After that, I will seal it off — "
+            "with or without your approval.",
+            "<b>You:</b> Copy that. Abort the docking, all power to life support.",
+        ),
+        questions=(
+            Question(
+                "Что случилось на станции?",
+                ("Пожар", "Пробоина в корпусе", "Отказал двигатель"),
+                1,
+                "«Hull breach» — пробоина в корпусе.",
+            ),
+            Question(
+                "Почему ты просишь не перекрывать секцию?",
+                (
+                    "Там остался член экипажа",
+                    "Там лежат припасы",
+                    "Компьютер ошибся",
+                ),
+                0,
+                "«One crew member… Give her two minutes to get out» — дать ей выбраться.",
+            ),
+            Question(
+                "Что значит «with or without your approval»?",
+                (
+                    "Компьютер ждёт твоего решения",
+                    "Компьютер сделает это в любом случае",
+                    "Компьютер отключится",
+                ),
+                1,
+                "«С твоим одобрением или без» — то есть решение уже принято.",
+            ),
+        ),
+    ),
 )
 
 BY_ID = {quest.id: quest for quest in QUESTS}
+
+
+def line_with(quest: Quest, phrase: str) -> str:
+    """Реплика сцены, где встречается слово, — без разметки. Пусто, если нет."""
+    needle = phrase.lower()
+    for line in quest.scene:
+        plain = re.sub(r"<[^>]+>", "", line)
+        if needle in plain.lower():
+            return plain.strip()
+    return ""
 
 
 def quest_of(quest_id: str) -> Optional[Quest]:

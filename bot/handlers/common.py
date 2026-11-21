@@ -19,7 +19,7 @@ from aiogram.types import (
 from ..db import Database, UserSettings
 from ..formatting import esc
 from ..keyboards import timezone_choices
-from .hub import home_keyboard
+from .hub import hidden_screens, home_keyboard
 
 #: Пояса, в которых живёт большинство: подсказка вместо ввода строки IANA.
 POPULAR_ZONES: tuple[tuple[str, str], ...] = (
@@ -179,6 +179,7 @@ HELP = """📔 <b>Личный дневник — как пользоватьс�
 /engstats — прогресс, серия дней, темы
 <code>/word loot</code> — перевод и пример; в разделе достаточно прислать слово
 <code>loot — добыча</code> — своё слово в карточки · /mywords — мой словарь
+/phrase — фраза дня · /say — сказать фразу голосовым
 
 <b>Общее (в разделе)</b>
 /stats — сводка · /chart — график · /last — последние записи
@@ -223,16 +224,18 @@ ABOUT = """ℹ️ <b>О шкале и об ограничениях</b>
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message) -> None:
-    await message.answer(START, reply_markup=home_keyboard())
+async def cmd_start(message: Message, db: Database, user: UserSettings) -> None:
+    hidden = await hidden_screens(db, user.user_id)
+    await message.answer(START, reply_markup=home_keyboard(hidden))
 
 
 @router.message(Command("help", "hub", "do"))
-async def cmd_help(message: Message) -> None:
+async def cmd_help(message: Message, db: Database, user: UserSettings) -> None:
     """Помощь — это не список команд, а кнопки «что сделать»."""
     from .hub import HOME
 
-    await message.answer(HOME, reply_markup=home_keyboard())
+    hidden = await hidden_screens(db, user.user_id)
+    await message.answer(HOME, reply_markup=home_keyboard(hidden))
 
 
 @router.message(Command("commands"))
