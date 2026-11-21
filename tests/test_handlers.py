@@ -984,7 +984,42 @@ class EnglishTest(BotTestCase):
 
     async def test_unknown_word_is_explained(self):
         await self.to_english()
-        self.assertIn("нет", await self.send("supercalifragilistic"))
+        answer = await self.send("supercalifragilistic")
+        self.assertIn("нет", answer)
+        self.assertIn("перевод", answer, "подсказать, как добавить своё слово")
+
+    async def test_own_word_is_added_and_asked(self):
+        await self.to_english()
+        answer = await self.send("respawn — возродиться; You will respawn in five seconds.")
+        self.assertIn("Записал", answer)
+        words = await self.db.eng_words(USER_ID)
+        self.assertEqual([card.en for card in words], ["respawn"])
+
+        # своё слово — уже в очереди на сегодня
+        await self.click("eng:more")
+        self.assertIn("1/", self.bot.texts[-1])
+        self.assertTrue(
+            "respawn" in self.bot.texts[-1] or "возродиться" in self.bot.texts[-1]
+        )
+        await self.click("eng:idk")
+        self.assertIn("respawn", self.bot.edits[-1])
+
+        # прислал снова — показывается своё, с кнопкой «Убрать»
+        self.assertIn("возродиться", await self.send("respawn"))
+        await self.click(f"eng:del:{words[0].id}")
+        self.assertEqual(await self.db.eng_words(USER_ID), [])
+
+    async def test_my_words_screen(self):
+        await self.send("/mywords")
+        self.assertIn("Пока пусто", self.bot.texts[-1])
+        await self.send("/word loot — добыча")
+        await self.send("/mywords")
+        self.assertIn("loot", self.bot.texts[-1])
+
+    async def test_expense_with_dash_stays_an_expense(self):
+        await self.to_english()
+        await self.send("taxi — 300")
+        self.assertFalse(await self.db.eng_words(USER_ID))
 
     async def test_numbers_still_reach_their_sections(self):
         """Из английского раздела давление и траты всё равно записываются."""

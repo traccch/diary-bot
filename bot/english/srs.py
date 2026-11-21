@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+import re
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -92,14 +93,20 @@ def make_question(
     """Собирает вопрос выбранного вида с тремя ложными вариантами."""
     rng = rng or random.Random()
 
+    if kind == CLOZE and not card.example:
+        kind = RECALL  # своё слово без примера: пропуск подставлять некуда
+
     if kind == RECALL:
         prompt = f"Как по-английски <b>{card.ru}</b>?"
         right, field = card.en, "en"
     elif kind == CLOZE:
         gap = "…" * 3
-        sentence = card.example.replace(card.en, f"<u>{gap}</u>", 1)
+        # регистр не важен: «No way, you beat him?» прячет и «no way»
+        sentence = re.sub(re.escape(card.en), f"<u>{gap}</u>", card.example, 1, re.IGNORECASE)
         if gap not in sentence:  # слово в примере в другой форме — покажем перевод
-            sentence = f"{card.example}\n<i>{card.example_ru}</i>"
+            sentence = card.example
+            if card.example_ru:
+                sentence += f"\n<i>{card.example_ru}</i>"
         prompt = f"Какое слово пропущено?\n\n{sentence}"
         right, field = card.en, "en"
     else:

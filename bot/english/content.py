@@ -7,7 +7,12 @@
 * тематические паки (`games`, `films`, `music`) — то, что встречается в
   интерфейсах, диалогах и текстах песен;
 * `phrasal` — фразовые глаголы: их не понять по отдельным словам, а без них
-  не понять ни одного диалога.
+  не понять ни одного диалога;
+* `talk` — разговорка: «my bad», «I'm down», «no cap». В учебниках этого нет,
+  а в чате игры и в сериале — на каждом шагу.
+
+Плюс свои слова: встретил в игре — прислал «loot — добыча», и оно ушло в
+карточки наравне с остальными.
 
 У каждой карточки есть пример-предложение: слово запоминается в контексте,
 а не списком. Пак легко расширять — достаточно дописать строки.
@@ -15,6 +20,7 @@
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -44,7 +50,13 @@ PACKS: tuple[Pack, ...] = (
     Pack("films", "Кино", "🎬", "живые реплики и то, что за ними стоит"),
     Pack("music", "Музыка", "🎵", "образы и идиомы из песен"),
     Pack("phrasal", "Фразовые", "🔗", "глаголы, которые меняют смысл предлогом"),
+    Pack("talk", "Разговорка", "💬", "как говорят на самом деле: в чате, в сериале, в игре"),
 )
+
+#: Слова, которые человек добавил сам. Отдельно от PACKS: у каждого свои,
+#: и в общий набор они не входят.
+MY_PACK = Pack("mine", "Мои слова", "📝", "то, что встретилось тебе самому")
+MY_PREFIX = "my:"
 
 PACK_BY_KEY = {pack.key: pack for pack in PACKS}
 
@@ -242,6 +254,52 @@ CARDS += _cards("phrasal", 2, [
     ("break down", "сломаться", "The car broke down.", "Машина сломалась."),
 ])
 
+CARDS += _cards("talk", 1, [
+    ("my bad", "моя вина, сорян", "My bad, I missed your call.", "Сорян, пропустил твой звонок."),
+    ("fair enough", "справедливо, ладно", "Fair enough, let's do it your way.", "Ладно, давай по-твоему."),
+    ("I'm down", "я за, я в деле", "Pizza tonight? I'm down.", "Пицца вечером? Я за."),
+    ("no worries", "без проблем, всё ок", "No worries, it happens.", "Ничего страшного, бывает."),
+    ("you bet", "ещё бы, конечно", "Coming tonight? — You bet.", "Придёшь вечером? — Ещё бы."),
+    ("hang on", "погоди", "Hang on, I'll be right back.", "Погоди, сейчас вернусь."),
+    ("I'm good", "мне не надо, спасибо", "More coffee? — I'm good, thanks.", "Ещё кофе? — Не, спасибо."),
+    ("kind of", "вроде, типа, слегка", "It's kind of weird.", "Это как-то странно."),
+    ("gonna", "собираюсь (= going to)", "I'm gonna be late.", "Я опоздаю."),
+    ("wanna", "хочу (= want to)", "Wanna play tonight?", "Сыграем вечером?"),
+    ("dude", "чувак", "Dude, look at this.", "Чувак, глянь."),
+    ("seriously", "серьёзно? да ладно", "Seriously? Again?", "Серьёзно? Опять?"),
+])
+
+CARDS += _cards("talk", 2, [
+    ("same", "аналогично, у меня так же", "I'm so tired. — Same.", "Я так устал. — Аналогично."),
+    ("chill", "спокойный; расслабиться", "Just chill, we have time.", "Расслабься, время есть."),
+    ("on point", "в точку, идеально", "Your timing was on point.", "Ты идеально попал по времени."),
+    ("it's on me", "я угощаю", "Put your wallet away, it's on me.", "Убери кошелёк, я угощаю."),
+    ("I'm in", "я в деле", "A road trip? I'm in.", "Поездка? Я в деле."),
+    ("for real", "серьёзно, по-настоящему", "Wait, for real?", "Стоп, серьёзно?"),
+    ("no big deal", "ерунда, ничего такого", "Relax, it's no big deal.", "Расслабься, ничего страшного."),
+    ("out of nowhere", "откуда ни возьмись", "He came out of nowhere.", "Он появился откуда ни возьмись."),
+    ("on my way", "уже иду, в пути", "I'm on my way, five minutes.", "Уже еду, пять минут."),
+    ("screw it", "да ну его, к чёрту", "Screw it, let's just go.", "Да ну его, просто поехали."),
+    ("it is what it is", "что поделаешь", "Well, it is what it is.", "Ну, что поделаешь."),
+    ("my two cents", "моё скромное мнение", "Here's my two cents: wait a week.", "Моё мнение: подожди неделю."),
+])
+
+CARDS += _cards("talk", 3, [
+    ("ngl", "честно говоря (not gonna lie)", "Ngl, that ending got me.", "Честно, концовка меня зацепила."),
+    ("sus", "подозрительный, мутный", "That guy is acting kinda sus.", "Этот тип ведёт себя подозрительно."),
+    ("I'm dead", "умираю (со смеху)", "That meme? I'm dead.", "Этот мем? Я умер."),
+    ("low-key", "втихую, слегка", "I'm low-key excited about it.", "Я втайне жду этого."),
+    ("spill the tea", "выкладывай, что там за сплетни", "Come on, spill the tea.", "Давай, рассказывай."),
+    ("touch grass", "выйди проветрись, отлипни от экрана", "You've been online all day, go touch grass.", "Ты весь день в сети, иди погуляй."),
+    ("salty", "обиженный, злой (после проигрыша)", "He's still salty about that match.", "Он до сих пор злится из-за того матча."),
+    ("bet", "договорились, идёт", "Six o'clock? — Bet.", "В шесть? — Идёт."),
+    ("cringe", "кринж, стыдно смотреть", "That video was so cringe.", "Это видео — сплошной кринж."),
+    ("no cap", "без шуток, честно", "Best burger in town, no cap.", "Лучший бургер в городе, без шуток."),
+    ("ghosted", "пропал без объяснений", "She ghosted me after one date.", "После первого свидания она просто пропала."),
+    ("GG", "хорошая игра (в конце матча)", "GG, that was close.", "GG, было близко."),
+    ("vibe", "атмосфера, настроение", "I love the vibe here.", "Мне нравится атмосфера здесь."),
+])
+
 BY_ID = {card.id: card for card in CARDS}
 BY_LEVEL: dict[int, list[Card]] = {}
 for _card in CARDS:
@@ -258,3 +316,24 @@ def all_ids() -> list[str]:
 
 def cards_of_pack(pack: str) -> list[Card]:
     return [card for card in CARDS if card.pack == pack]
+
+
+def custom_card(word_id: int, en: str, ru: str, example: str = "") -> Card:
+    """Своё слово в виде обычной карточки — дальше с ним работают как с любой.
+
+    Текст экранируется здесь: карточки набора уже готовы к HTML-разметке
+    сообщений, и свои слова должны быть такими же.
+    """
+    return Card(
+        id=f"{MY_PREFIX}{word_id}",
+        en=html.escape(en, quote=False),
+        ru=html.escape(ru, quote=False),
+        example=html.escape(example, quote=False),
+        example_ru="",
+        pack=MY_PACK.key,
+        level=1,
+    )
+
+
+def is_custom(item_id: str) -> bool:
+    return item_id.startswith(MY_PREFIX)

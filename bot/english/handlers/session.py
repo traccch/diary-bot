@@ -21,6 +21,7 @@ from ...db import Database, UserSettings
 from .. import content, quests, srs
 from ..db import streak
 from ..keyboards import after_card, after_session, answer_options, english_menu
+from .progress import level_of
 
 router = Router(name="english-session")
 
@@ -49,11 +50,14 @@ async def open_menu(message: Message, db: Database, user: UserSettings, today: d
     day = await db.eng_day(user.user_id, today)
     done = await db.eng_done_quests(user.user_id)
     has_quest = quests.next_quest(done) is not None
+    mine = len(await db.eng_words(user.user_id))
 
     lines = [
         "🇬🇧 <b>Английский</b>",
         "",
-        f"Слов в работе: <b>{total}</b> · выучено: <b>{learned}</b> из {len(content.CARDS)}",
+        f"Слов в работе: <b>{total}</b> · выучено: <b>{learned}</b>"
+        f" из {len(content.CARDS) + mine}",
+        f"Уровень: {level_of(learned)}",
     ]
     if due:
         lines.append(f"Пора повторить: <b>{due}</b>")
@@ -61,6 +65,9 @@ async def open_menu(message: Message, db: Database, user: UserSettings, today: d
         lines.append(f"Сегодня уже: {day.answered} ответов, верных {day.correct}")
     lines.append("")
     lines.append("<i>Пять минут в день дают больше, чем час раз в неделю.</i>")
+    lines.append(
+        "<i>Встретил слово в игре — пришли «loot — добыча», оно уйдёт в карточки.</i>"
+    )
 
     await message.answer("\n".join(lines), reply_markup=english_menu(due, has_quest))
 
@@ -84,25 +91,28 @@ async def start_session(
         )
         return
 
+    _, learned = await db.eng_counts(user.user_id)
     await state.set_state(EngSession.answering)
-    await state.update_data(queue=queue, asked=0, correct=0, current=None)
-    await _ask_next(message, db, user, state)
+    await state.update_data(
+        queue=queue, asked=0, correct=0, current=None, learned_before=learned
+    )
+    await _ask_next(message, db, user, state, today)
 
 
 async def _ask_next(
-    message: Message, db: Database, user: UserSettings, state: FSMContext
+    message: Message, db: Database, user: UserSettings, state: FSMContext, today: dt.date
 ) -> None:
     data = await state.get_data()
     queue: list[str] = list(data.get("queue") or [])
     if not queue:
-        await _finish(message, db, user, state)
+        await _finish(message, db, user, state, today)
         return
 
     item_id = queue.pop(0)
-    card = content.card_of(item_id)
-    if card is None:  # карточку убрали из набора — просто пропускаем
+    card = await db.eng_card(user.user_id, item_id)
+    if card is None:  # карточку убрали из набора или из словаря — пропускаем
         await state.update_data(queue=queue)
-        await _ask_next(message, db, user, state)
+        await _ask_next(message, db, user, state, today)
         return
 
     progress = await db.eng_progress_of(user.user_id, item_id)
@@ -163,7 +173,7 @@ async def _grade(
     if correct:
         await state.update_data(correct=int(data.get("correct") or 0) + 1)
 
-    card = content.card_of(item_id)
+    card = await db.eng_card(user.user_id, item_id)
     if correct:
         head = "✅ <b>Верно</b>"
     elif known:
@@ -175,8 +185,10 @@ async def _grade(
     body = [head, ""]
     if card is not None:
         body.append(f"<b>{card.en}</b> — {card.ru}")
-        body.append(f"<i>{card.example}</i>")
-        body.append(f"<i>{card.example_ru}</i>")
+        if card.example:
+            body.append(f"<i>{card.example}</i>")
+        if card.example_ru:
+            body.append(f"<i>{card.example_ru}</i>")
 
     await callback.answer()
     if isinstance(callback.message, Message):
@@ -184,14 +196,14 @@ async def _grade(
 
 
 async def _finish(
-    message: Message, db: Database, user: UserSettings, state: FSMContext
+    message: Message, db: Database, user: UserSettings, state: FSMContext, today: dt.date
 ) -> None:
     data = await state.get_data()
     asked = int(data.get("asked") or 0)
     correct = int(data.get("correct") or 0)
+    learned_before = data.get("learned_before")
     await state.clear()
 
-    today = dt.date.today()
     days = await db.eng_active_days(user.user_id)
     row = streak(days, today)
     total, learned = await db.eng_counts(user.user_id)
@@ -207,10 +219,28 @@ async def _finish(
         lines.append(f"🔥 Серия: <b>{row}</b> дней подряд")
     elif row == 1:
         lines.append("🔥 Серия началась — завтра не разрывай")
+    lines.extend(milestones(learned_before, learned, row))
 
     await message.answer(
         "\n".join(lines), reply_markup=after_session(quests.next_quest(done) is not None)
     )
+
+
+#: Серии, которые стоит отметить отдельно.
+STREAK_MARKS = (3, 7, 14, 30, 50, 100, 200, 365)
+
+
+def milestones(learned_before, learned: int, row: int) -> list[str]:
+    """Что отпраздновать в конце сессии: выученные слова, новый уровень, серию."""
+    lines: list[str] = []
+    if isinstance(learned_before, int) and learned > learned_before:
+        gained = learned - learned_before
+        lines.append(f"🌱 Сегодня закрепилось: <b>+{gained}</b>")
+        if level_of(learned) != level_of(learned_before):
+            lines.append(f"🎉 Новый уровень: <b>{level_of(learned)}</b>")
+    if row in STREAK_MARKS:
+        lines.append(f"🏆 {row} дней подряд — это уже привычка")
+    return lines
 
 
 @router.message(Command("eng", "english"))
@@ -257,11 +287,34 @@ async def cb_dont_know(
 
 @router.callback_query(EngSession.answering, F.data == "eng:next")
 async def cb_next(
-    callback: CallbackQuery, db: Database, user: UserSettings, state: FSMContext
+    callback: CallbackQuery,
+    db: Database,
+    user: UserSettings,
+    now: dt.datetime,
+    state: FSMContext,
 ) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
-        await _ask_next(callback.message, db, user, state)
+        await _ask_next(callback.message, db, user, state, now.date())
+
+
+@router.message(EngSession.answering, F.text, ~F.text.startswith("/"))
+async def on_text_mid_session(
+    message: Message,
+    db: Database,
+    user: UserSettings,
+    now: dt.datetime,
+    state: FSMContext,
+) -> None:
+    """Посреди карточек прислали текст — чаще всего слово из игры. Не молчим.
+
+    Сессию закрываем (ответы уже записаны), а текст разбираем как обычное
+    сообщение: слово переведётся или добавится, давление запишется.
+    """
+    from ...handlers.router import free_text_like  # там же подключён и этот роутер
+
+    await state.clear()
+    await free_text_like(message, message.text or "", db, user, now)
 
 
 #: Последняя надежда: кнопка из сессии, которой больше нет. Так бывает, если
@@ -279,7 +332,7 @@ async def cb_lost_session(callback: CallbackQuery) -> None:
     await callback.answer("Эта сессия уже закрыта")
     if isinstance(callback.message, Message):
         await callback.message.answer(
-            "Сессия прервалась — похоже, бот перезапускался.\n"
+            "Сессия прервалась — эти кнопки уже не работают.\n"
             "Ответы, которые ты успел дать, засчитаны.",
             reply_markup=after_session(True),
         )

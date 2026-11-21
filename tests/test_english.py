@@ -13,7 +13,8 @@ from bot.db import DEFAULT_REMINDERS, Database
 from bot.english import content, quests, srs
 from bot.english.db import streak
 from bot.english.handlers.progress import level_of
-from bot.english.lookup import find, looks_english
+from bot.english.handlers.session import milestones
+from bot.english.lookup import find, looks_english, parse_entry
 
 from .support import memory_db
 
@@ -157,6 +158,65 @@ class LevelTest(unittest.TestCase):
         self.assertIn("B1", level_of(200))
 
 
+class OwnWordsParseTest(unittest.TestCase):
+    def test_word_and_translation(self):
+        self.assertEqual(parse_entry("loot — добыча"), ("loot", "добыча", ""))
+        self.assertEqual(parse_entry("loot - добыча"), ("loot", "добыча", ""))
+        self.assertEqual(parse_entry("loot: добыча"), ("loot", "добыча", ""))
+        self.assertEqual(parse_entry("I'm down = я за"), ("I'm down", "я за", ""))
+
+    def test_example_after_semicolon_or_newline(self):
+        self.assertEqual(
+            parse_entry("loot — добыча; We split the loot."),
+            ("loot", "добыча", "We split the loot."),
+        )
+        self.assertEqual(
+            parse_entry("respawn — возродиться\nYou will respawn in 5"),
+            ("respawn", "возродиться", "You will respawn in 5"),
+        )
+
+    def test_hyphen_inside_word_is_kept(self):
+        self.assertEqual(parse_entry("check-in - регистрация")[0], "check-in")
+
+    def test_not_a_word_entry(self):
+        self.assertIsNone(parse_entry("loot"))
+        self.assertIsNone(parse_entry("taxi — 300"), "это трата, а не слово")
+        self.assertIsNone(parse_entry("кофе — 300"))
+        self.assertIsNone(parse_entry("120/80 68"))
+
+
+class TalkPackTest(unittest.TestCase):
+    def test_cloze_ignores_case(self):
+        card = content.BY_ID["talk:my-bad"]
+        question = srs.make_question(card, srs.CLOZE, random.Random(1))
+        self.assertIn("<u>", question.prompt)
+        self.assertNotIn("My bad", question.prompt)
+
+    def test_custom_word_without_example_is_not_a_cloze(self):
+        card = content.custom_card(1, "respawn", "возродиться")
+        question = srs.make_question(card, srs.CLOZE, random.Random(1))
+        self.assertEqual(question.kind, srs.RECALL)
+        self.assertIn("respawn", question.options)
+
+    def test_custom_word_is_escaped(self):
+        card = content.custom_card(1, "a<b", "x & y")
+        self.assertEqual((card.en, card.ru), ("a&lt;b", "x &amp; y"))
+
+
+class MilestonesTest(unittest.TestCase):
+    def test_new_level_is_celebrated(self):
+        lines = milestones(49, 51, 2)
+        self.assertTrue(any("+2" in line for line in lines))
+        self.assertTrue(any("Новый уровень" in line for line in lines))
+
+    def test_quiet_when_nothing_changed(self):
+        self.assertEqual(milestones(10, 10, 2), [])
+        self.assertEqual(milestones(None, 10, 2), [])
+
+    def test_streak_marks(self):
+        self.assertTrue(any("7 дней" in line for line in milestones(5, 5, 7)))
+
+
 class ProgressStorageTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -203,6 +263,39 @@ class ProgressStorageTest(unittest.IsolatedAsyncioTestCase):
         await self.db.eng_finish_quest(USER_ID, "tavern", TODAY, 2)
         await self.db.eng_finish_quest(USER_ID, "tavern", TODAY, 3)
         self.assertEqual(await self.db.eng_done_quests(USER_ID), ["tavern"])
+
+    async def test_own_word_goes_to_cards_today(self):
+        card, created = await self.db.eng_add_word(USER_ID, "loot", "добыча", "", TODAY)
+        self.assertTrue(created)
+        self.assertTrue(content.is_custom(card.id))
+        progress = await self.db.eng_progress_of(USER_ID, card.id)
+        self.assertEqual((progress.box, progress.due_on), (0, TODAY))
+        self.assertIn(card.id, srs.build_session(await self.db.eng_progress(USER_ID), TODAY))
+        self.assertEqual((await self.db.eng_card(USER_ID, card.id)).ru, "добыча")
+
+    async def test_same_word_updates_instead_of_duplicating(self):
+        first, _ = await self.db.eng_add_word(USER_ID, "Loot", "добыча", "", TODAY)
+        await self.db.eng_save_answer(USER_ID, first.id, 2, TODAY, True, False)
+        second, created = await self.db.eng_add_word(USER_ID, "loot", "лут", "Grab the loot.", TODAY)
+
+        self.assertFalse(created)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(len(await self.db.eng_words(USER_ID)), 1)
+        self.assertEqual((await self.db.eng_progress_of(USER_ID, first.id)).box, 2)
+        self.assertEqual((await self.db.eng_find_word(USER_ID, "LOOT")).ru, "лут")
+
+    async def test_own_words_are_private(self):
+        card, _ = await self.db.eng_add_word(USER_ID, "loot", "добыча", "", TODAY)
+        await self.db.ensure_user(USER_ID + 1)
+        self.assertIsNone(await self.db.eng_card(USER_ID + 1, card.id))
+        self.assertEqual(await self.db.eng_words(USER_ID + 1), [])
+
+    async def test_deleting_own_word_drops_its_progress(self):
+        card, _ = await self.db.eng_add_word(USER_ID, "loot", "добыча", "", TODAY)
+        self.assertTrue(await self.db.eng_delete_word(USER_ID, card.id))
+        self.assertIsNone(await self.db.eng_progress_of(USER_ID, card.id))
+        self.assertFalse(await self.db.eng_delete_word(USER_ID, card.id))
+        self.assertFalse(await self.db.eng_delete_word(USER_ID, "games:loot"))
 
 
 class DefaultRemindersTest(unittest.IsolatedAsyncioTestCase):

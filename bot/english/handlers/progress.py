@@ -23,6 +23,8 @@ LEVELS = (
     (50, "A1 — понимаю простое"),
     (90, "A2 — держу простой диалог"),
     (130, "B1 — понимаю сюжет"),
+    (170, "B1+ — сериал с английскими субтитрами"),
+    (250, "B2 — смотрю без перевода"),
 )
 
 
@@ -51,11 +53,13 @@ async def show_progress(
     row = streak(days, today)
     done_quests = await db.eng_done_quests(user.user_id)
     progress = await db.eng_progress(user.user_id)
+    mine = await db.eng_words(user.user_id)
+    everything = len(content.CARDS) + len(mine)
 
     lines = [
         "📈 <b>Английский: прогресс</b>",
         "",
-        f"Выучено: <b>{learned}</b> из {len(content.CARDS)}  {_bar(learned, len(content.CARDS))}",
+        f"Выучено: <b>{learned}</b> из {everything}  {_bar(learned, everything)}",
         f"В работе: {total} · повторить сегодня: {due}",
         f"Уровень: <b>{level_of(learned)}</b>",
     ]
@@ -67,6 +71,9 @@ async def show_progress(
     by_pack: dict[str, int] = {}
     for item in progress:
         if item.box >= LEARNED_BOX:
+            if content.is_custom(item.item_id):
+                by_pack[content.MY_PACK.key] = by_pack.get(content.MY_PACK.key, 0) + 1
+                continue
             card = content.card_of(item.item_id)
             if card is not None:
                 by_pack[card.pack] = by_pack.get(card.pack, 0) + 1
@@ -80,6 +87,12 @@ async def show_progress(
             f"{pack.icon} {pack.title}: {known}/{total_in_pack} "
             f"{_bar(known, total_in_pack, 6)}"
         )
+    own = content.MY_PACK
+    if mine:
+        known = by_pack.get(own.key, 0)
+        lines.append(f"{own.icon} {own.title}: {known}/{len(mine)} {_bar(known, len(mine), 6)}")
+    else:
+        lines.append(f"{own.icon} {own.title}: пока нет — пришли «слово — перевод»")
 
     lines.append("")
     lines.append(f"🗺 Квесты: {len(done_quests)} из {len(quests.QUESTS)}")

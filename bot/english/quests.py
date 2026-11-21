@@ -248,6 +248,135 @@ QUESTS: tuple[Quest, ...] = (
             ),
         ),
     ),
+    Quest(
+        id="coop",
+        title="Кооп в голосовом",
+        icon="🎧",
+        setting="Онлайн-шутер, ты с напарником в голосовом чате. Слушай коллауты.",
+        vocab=(
+            ("push", "наступать, давить"),
+            ("cover me", "прикрой меня"),
+            ("one shot", "на одном выстреле, почти добит"),
+            ("my bad", "моя вина, сорян"),
+        ),
+        scene=(
+            "<b>Mate:</b> Two on the left, behind the truck. One's one shot.",
+            "<b>You:</b> Got it. Cover me, I'm gonna push.",
+            "<b>Mate:</b> Wait, wait — they've got a sniper on the roof. Don't peek.",
+            "<b>You:</b> Too late. I'm down. My bad.",
+            "<b>Mate:</b> No worries. I'll grab your loot. Next round we play it slow.",
+        ),
+        questions=(
+            Question(
+                "Что значит «one's one shot»?",
+                ("Один стреляет одиночными", "Один враг почти добит", "Остался один патрон"),
+                1,
+                "«One shot» — хватит одного попадания. Так говорят о почти убитом враге.",
+            ),
+            Question(
+                "Что случилось с тобой после «Too late»?",
+                ("Тебя выбили из игры", "Ты победил", "Ты спрятался"),
+                0,
+                "«I'm down» в игре — «меня уронили». В обычной речи это «я за» — "
+                "смысл решает контекст.",
+            ),
+            Question(
+                "Что напарник предлагает на следующий раунд?",
+                ("Играть агрессивнее", "Играть осторожно", "Сменить карту"),
+                1,
+                "«Play it slow» — не торопиться, играть аккуратно.",
+            ),
+        ),
+    ),
+    Quest(
+        id="sitcom",
+        title="Утро в ситкоме",
+        icon="☕",
+        setting="Кухня, утро. Двое соседей по квартире — как в любом ситкоме.",
+        vocab=(
+            ("roommate", "сосед по квартире"),
+            ("run out of", "закончиться (о запасах)"),
+            ("it's on me", "я угощаю, с меня"),
+            ("deal", "договорились"),
+        ),
+        scene=(
+            "<b>Sam:</b> Did you finish my cereal again?",
+            "<b>Alex:</b> Define «finish».",
+            "<b>Sam:</b> The box is empty, Alex. We ran out of milk too.",
+            "<b>Alex:</b> Okay, okay, my bad. Breakfast at the diner — it's on me.",
+            "<b>Sam:</b> And you buy cereal on the way back.",
+            "<b>Alex:</b> Deal. Low-key, this is the best outcome for me.",
+        ),
+        questions=(
+            Question(
+                "Почему Сэм злится?",
+                ("Алекс съел его хлопья", "Алекс проспал", "Алекс разбил кружку"),
+                0,
+                "«Did you finish my cereal again?» — ты опять доел мои хлопья?",
+            ),
+            Question(
+                "Кто платит за завтрак?",
+                ("Сэм", "Алекс", "Пополам"),
+                1,
+                "«It's on me» — с меня. Алекс угощает в качестве извинения.",
+            ),
+            Question(
+                "Что значит последняя реплика Алекса?",
+                (
+                    "Он втайне доволен, как всё вышло",
+                    "Он обиделся",
+                    "Он передумал идти",
+                ),
+                0,
+                "«Low-key» — «втихую, если честно». Алексу на самом деле всё нравится — "
+                "в этом и шутка.",
+            ),
+        ),
+    ),
+    Quest(
+        id="detective",
+        title="Допрос",
+        icon="🕵️",
+        setting="Комната для допросов. Детектив и свидетель, который явно что-то скрывает.",
+        vocab=(
+            ("alibi", "алиби"),
+            ("make up", "выдумать"),
+            ("figure out", "разобраться, вычислить"),
+            ("come clean", "сознаться, рассказать правду"),
+        ),
+        scene=(
+            "<b>Detective:</b> You said you were home all night. Alone.",
+            "<b>Witness:</b> That's right. Watched a movie, went to bed.",
+            "<b>Detective:</b> Funny. Your phone says you were downtown at midnight.",
+            "<b>Witness:</b> I… must have made a mistake about the time.",
+            "<b>Detective:</b> Or you made up the whole story. "
+            "Look, we'll figure it out either way. Come clean now, and it goes easier for you.",
+        ),
+        questions=(
+            Question(
+                "Что выдало свидетеля?",
+                ("Его телефон", "Камера в подъезде", "Сосед"),
+                0,
+                "«Your phone says you were downtown» — телефон показывает, что он был в центре.",
+            ),
+            Question(
+                "В чём детектив его подозревает?",
+                (
+                    "Что он перепутал фильм",
+                    "Что он выдумал всю историю",
+                    "Что он потерял телефон",
+                ),
+                1,
+                "«You made up the whole story» — ты всё выдумал.",
+            ),
+            Question(
+                "Что предлагает детектив?",
+                ("Прийти завтра", "Рассказать правду сейчас", "Позвать адвоката"),
+                1,
+                "«Come clean» — сознаться. «It goes easier for you» — тебе же будет проще.",
+            ),
+        ),
+    ),
 )
 
 BY_ID = {quest.id: quest for quest in QUESTS}

@@ -42,6 +42,7 @@ def english_menu(due: int, has_quest: bool) -> InlineKeyboardMarkup:
     if has_quest:
         builder.button(text="🗺 Квест", callback_data="eng:quest")
     builder.button(text="📈 Прогресс", callback_data="eng:stats")
+    builder.button(text="📝 Мои слова", callback_data="eng:mine")
     builder.adjust(2)
     return builder.as_markup()
 

@@ -6,6 +6,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+from . import content
 from .srs import LEARNED_BOX, Progress
 
 SCHEMA = """
@@ -33,6 +34,19 @@ CREATE TABLE IF NOT EXISTS eng_days (
     new_seen INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, on_date)
 );
+
+-- Свои слова: встретил в игре или сериале — добавил. В карточки уходят под
+-- id «my:<id>» и дальше живут в eng_progress как любые другие.
+CREATE TABLE IF NOT EXISTS eng_words (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id  INTEGER NOT NULL,
+    en       TEXT NOT NULL,
+    ru       TEXT NOT NULL,
+    example  TEXT NOT NULL DEFAULT '',
+    added_on TEXT NOT NULL DEFAULT (date('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_eng_words_user ON eng_words(user_id);
 
 -- Пройденные квесты.
 CREATE TABLE IF NOT EXISTS eng_quests (
@@ -166,6 +180,89 @@ class EnglishRepo:
         )
         row = await cur.fetchone()
         return row["due"] or 0
+
+    async def eng_add_word(
+        self, user_id: int, en: str, ru: str, example: str, on_date: dt.date
+    ) -> tuple[content.Card, bool]:
+        """Своё слово. Если такое уже есть — обновляет перевод. True — слово новое.
+
+        Новое слово сразу попадает в очередь на сегодня (коробка 0), как и
+        взятое из набора кнопкой «Взять в изучение».
+        """
+        cur = await self.conn.execute(
+            "SELECT id FROM eng_words WHERE user_id = ? AND lower(en) = lower(?)",
+            (user_id, en),
+        )
+        row = await cur.fetchone()
+        if row is not None:
+            word_id = row["id"]
+            await self.conn.execute(
+                "UPDATE eng_words SET en = ?, ru = ?, example = ? WHERE id = ?",
+                (en, ru, example, word_id),
+            )
+            await self.conn.commit()
+            return content.custom_card(word_id, en, ru, example), False
+
+        cur = await self.conn.execute(
+            "INSERT INTO eng_words (user_id, en, ru, example, added_on) VALUES (?, ?, ?, ?, ?)",
+            (user_id, en, ru, example, on_date.isoformat()),
+        )
+        word_id = cur.lastrowid
+        card = content.custom_card(word_id, en, ru, example)
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO eng_progress (user_id, item_id, box, due_on)"
+            " VALUES (?, ?, 0, ?)",
+            (user_id, card.id, on_date.isoformat()),
+        )
+        await self.conn.commit()
+        return card, True
+
+    async def eng_words(self, user_id: int) -> list[content.Card]:
+        """Свои слова, свежие сверху."""
+        cur = await self.conn.execute(
+            "SELECT id, en, ru, example FROM eng_words WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        )
+        return [
+            content.custom_card(row["id"], row["en"], row["ru"], row["example"])
+            for row in await cur.fetchall()
+        ]
+
+    async def eng_find_word(self, user_id: int, en: str) -> Optional[content.Card]:
+        cur = await self.conn.execute(
+            "SELECT id, en, ru, example FROM eng_words WHERE user_id = ? AND lower(en) = lower(?)",
+            (user_id, en.strip()),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return content.custom_card(row["id"], row["en"], row["ru"], row["example"])
+
+    async def eng_delete_word(self, user_id: int, item_id: str) -> bool:
+        if not content.is_custom(item_id):
+            return False
+        word_id = item_id[len(content.MY_PREFIX):]
+        cur = await self.conn.execute(
+            "DELETE FROM eng_words WHERE user_id = ? AND id = ?", (user_id, word_id)
+        )
+        await self.conn.execute(
+            "DELETE FROM eng_progress WHERE user_id = ? AND item_id = ?", (user_id, item_id)
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def eng_card(self, user_id: int, item_id: str) -> Optional[content.Card]:
+        """Карточка по id — из общего набора или из своих слов."""
+        if not content.is_custom(item_id):
+            return content.card_of(item_id)
+        cur = await self.conn.execute(
+            "SELECT id, en, ru, example FROM eng_words WHERE user_id = ? AND id = ?",
+            (user_id, item_id[len(content.MY_PREFIX):]),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return content.custom_card(row["id"], row["en"], row["ru"], row["example"])
 
     async def eng_finish_quest(
         self, user_id: int, quest_id: str, on_date: dt.date, score: int

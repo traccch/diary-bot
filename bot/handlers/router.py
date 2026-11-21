@@ -196,7 +196,7 @@ async def free_text_like(
     # В разделе английского обычный текст — это чаще всего слово из игры или
     # фильма: сначала пробуем перевести, а уже потом искать в нём цифры.
     if current == sections.ENGLISH:
-        if await try_lookup(message, text, db, user):
+        if await try_lookup(message, text, db, user, now.date()):
             return
         current = sections.DEFAULT
 
