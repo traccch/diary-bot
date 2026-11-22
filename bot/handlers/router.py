@@ -196,6 +196,12 @@ async def free_text_like(
     if await try_answer(message, text, db, user, now):
         return
 
+    # «уснул», «проснулся 7:05» — про малыша, если он заведён
+    from ..baby import handlers as baby
+
+    if await baby.try_text(message, text, db, user, now, full=False):
+        return
+
     # «пробег 203116» разбираем первым: иначе это станет тратой в двести тысяч
     if await try_mileage(message, text, db, user, now.date()):
         text = strip_mileage(text)

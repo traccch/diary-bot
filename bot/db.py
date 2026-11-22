@@ -22,6 +22,7 @@ from .car.db import CarRepo
 from .english.db import SCHEMA as ENGLISH_SCHEMA
 from .fsmstore import SCHEMA as FSM_SCHEMA
 from .english.db import EnglishRepo
+from .baby.db import SCHEMA as BABY_SCHEMA, BabyRepo
 from .money.db import SCHEMA as MONEY_SCHEMA
 from .money.db import MoneyRepo
 from .pressure.db import SCHEMA as PRESSURE_SCHEMA
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 SCHEMA = (
     CORE_SCHEMA + PRESSURE_SCHEMA + MONEY_SCHEMA + ENGLISH_SCHEMA + CAR_SCHEMA + FSM_SCHEMA
+    + BABY_SCHEMA
 )
 
 
@@ -159,7 +161,7 @@ def _row_to_reminder(row: aiosqlite.Row) -> Reminder:
     )
 
 
-class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
+class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo, BabyRepo):
     def __init__(self, path: str, default_tz: str) -> None:
         self._path = path
         self._default_tz = default_tz
@@ -283,6 +285,8 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo):
         размечен». Теперь помним темы поимённо — новая приедет, выключенная
         не вернётся.
         """
+        if await self.baby_role(user_id) == "family":
+            return 0  # приглашённому к малышу — только его раздел, без чужих напоминаний
         seeded = await self._seeded_topics(user_id)
         rows = [
             (user_id, topic, at)

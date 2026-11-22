@@ -183,6 +183,10 @@ class ReminderScheduler:
                 sent += await self._ask_health(candidate.user_id, candidate.at, now_utc)
                 continue
 
+            if candidate.topic == sections.BABY:
+                sent += await self._baby_weather(candidate.user_id, now)
+                continue
+
             if candidate.topic == sections.CAR:
                 await self._db.set_meta(
                     pending.key(candidate.user_id),
@@ -230,6 +234,17 @@ class ReminderScheduler:
         return await self._send(
             user_id, prompts.render(prompt), sections.HEALTH, health_prompt(prompt)
         )
+
+    async def _baby_weather(self, user_id: int, now: dt.datetime) -> int:
+        """Утро: прогноз и что надеть малышу. Нет города или ребёнка — молчим."""
+        from .baby import handlers as baby
+        from .baby.keyboards import back
+
+        child, _ = await self._db.baby_of(user_id)
+        if child is None or child.lat is None:
+            return 0
+        text = await baby.weather_text(child, now)
+        return await self._send(user_id, text, sections.BABY, back())
 
     async def _already_done(self, candidate, now: dt.datetime) -> bool:
         """Дёргать человека, когда он уже всё сделал, — вернейший способ

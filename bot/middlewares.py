@@ -43,6 +43,16 @@ class UserMiddleware(BaseMiddleware):
         data["user"] = settings
         data["now"] = now
         data["today"] = now.date()
+
+        # Приглашённый к малышу видит только его раздел: всё прочее — мимо
+        role = await db.baby_role(user.id)
+        data["baby_role"] = role
+        if role == "family":
+            from .baby import handlers as baby
+
+            if not baby.family_may(event):
+                await baby.family_fallback(event, data)
+                return None
         return await handler(event, data)
 
 
@@ -77,6 +87,8 @@ class AccessMiddleware(BaseMiddleware):
 
         if await self.allowed(user.id, data["db"]):
             return await handler(event, data)
+        if await self.invited(event, data["db"]):
+            return await handler(event, data)
 
         logger.warning(
             "Чужой стучится: %s (id %s) — не пустил", user.full_name, user.id
@@ -86,9 +98,22 @@ class AccessMiddleware(BaseMiddleware):
             await self.refuse(event)
         return None
 
+    @staticmethod
+    async def invited(event: TelegramObject, db: Database) -> bool:
+        """Пришёл по ссылке-приглашению к малышу — пускаем, дальше разберётся раздел."""
+        text = getattr(event, "text", None) or ""
+        parts = text.split()
+        if len(parts) != 2 or parts[0].split("@")[0] != "/start":
+            return False
+        if not parts[1].startswith("fam_"):
+            return False
+        return await db.baby_invite_valid(parts[1][len("fam_"):])
+
     async def allowed(self, user_id: int, db: Database) -> bool:
         if user_id in self._allowed:
             return True
+        if await db.baby_role(user_id) is not None:
+            return True  # приглашён хозяином к малышу
         if self._allowed:
             return False  # список задан явно — значит, он и решает
         owner = await db.owner_id()

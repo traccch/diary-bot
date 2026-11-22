@@ -22,6 +22,9 @@ HEALTH = "health"
 #: Ещё одна тема без раздела: утренний пробег.
 CAR = "car"
 
+#: Малыш: утренний прогноз и совет по одежде.
+BABY = "baby"
+
 
 @dataclass(frozen=True)
 class Section:
@@ -70,8 +73,15 @@ CAR_TOPIC = Section(
     hint="число с одометра по утрам",
 )
 
+BABY_TOPIC = Section(
+    key=BABY,
+    title="Малыш",
+    icon="👶",
+    hint="сон, замеры, погода и одежда на прогулку",
+)
+
 #: Всё, к чему может быть привязано напоминание: разделы и темы без раздела.
-TOPICS: tuple[Section, ...] = (*SECTIONS, HEALTH_TOPIC, CAR_TOPIC)
+TOPICS: tuple[Section, ...] = (*SECTIONS, HEALTH_TOPIC, CAR_TOPIC, BABY_TOPIC)
 
 BY_KEY = {section.key: section for section in SECTIONS}
 TOPICS_BY_KEY = {section.key: section for section in TOPICS}

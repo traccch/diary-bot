@@ -120,8 +120,12 @@ HOME_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("money", "💰 Деньги", sections.MONEY),
     ("health", "🫀 Самочувствие", sections.HEALTH),
     ("eng", "🇬🇧 Английский", sections.ENGLISH),
+    ("baby", "👶 Малыш", sections.BABY),
     ("car", "🚗 Пробег", sections.CAR),
 )
+
+#: Экраны, у которых свой обработчик вместо общего «do:…».
+OWN_CALLBACKS = {"baby": "baby:menu"}
 
 
 hidden_key = sections.hidden_key
@@ -137,7 +141,7 @@ def home_keyboard(hidden: frozenset[str] = frozenset()):
     builder = InlineKeyboardBuilder()
     for name, text, _ in HOME_ITEMS:
         if name not in hidden:
-            builder.button(text=text, callback_data=f"do:{name}")
+            builder.button(text=text, callback_data=OWN_CALLBACKS.get(name, f"do:{name}"))
     builder.button(text="⚙️ Настройки", callback_data="do:settings")
     builder.adjust(2)
     return builder.as_markup()

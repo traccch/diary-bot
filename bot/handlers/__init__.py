@@ -20,7 +20,11 @@ from . import (
 
 
 def build_router() -> Router:
+    from ..baby import handlers as baby
+
     root = Router(name="root")
+    # первым: приглашение по ссылке и текст приглашённого — раньше общих /start и разбора
+    root.include_router(baby.router)
     root.include_router(common.router)
     root.include_router(menu.router)
     root.include_router(hub.router)

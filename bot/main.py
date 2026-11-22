@@ -47,6 +47,7 @@ COMMANDS = [
     BotCommand(command="say", description="Английский: сказать вслух"),
     BotCommand(command="mywords", description="Английский: мой словарь"),
     BotCommand(command="engstats", description="Английский: прогресс"),
+    BotCommand(command="baby", description="Малыш: сон, рост и вес, погода"),
     BotCommand(command="help", description="Меню: всё кнопками, без команд"),
     BotCommand(command="remind", description="Напоминания"),
     BotCommand(command="car", description="Пробег: сводка по машине"),
