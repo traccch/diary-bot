@@ -39,6 +39,7 @@ USAGE = (
 
 
 def _list_text(user: UserSettings, reminders: Sequence[Reminder]) -> str:
+    reminders = [item for item in reminders if item.enabled]  # выключенные не пугают
     if not reminders:
         return "⏰ Напоминаний нет.\n\nДобавить: <code>/remind 08:00</code>"
 
@@ -78,6 +79,22 @@ async def _refresh_list(
         )
     except TelegramBadRequest:
         pass
+
+
+@router.message(Command("quiet", "silence", "тихо"))
+async def cmd_quiet(message: Message, db: Database, user: UserSettings) -> None:
+    """Одним сообщением: больше никаких напоминаний про давление, траты, шаги, пробег."""
+    await db.quiet(user.user_id)
+    left = [item for item in await db.list_reminders(user.user_id) if item.enabled]
+    tail = ""
+    if left:
+        times = ", ".join(
+            f"{sections.topic_of(item.topic).icon} {item.label}" for item in left
+        )
+        tail = f"\n\nОстались только: {times}. Убрать и их — /reminders, нажать на время."
+    await message.answer(
+        "🔕 Готово: про давление, траты, шаги и пробег больше не напомню." + tail
+    )
 
 
 @router.message(Command("remind"))

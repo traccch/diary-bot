@@ -337,3 +337,42 @@ class BabyBotTest(BotTestCase):
         await self.invite_wife()
         reminders = await self.db.list_reminders(WIFE)
         self.assertEqual([item.topic for item in reminders], ["baby"])
+
+
+class QuietTest(BotTestCase):
+    """Хватит напоминать про давление, траты, шаги и пробег."""
+
+    async def test_quiet_command(self):
+        await self.send("/start")
+        topics = {item.topic for item in await self.db.list_reminders(USER_ID) if item.enabled}
+        self.assertIn("pressure", topics)
+
+        answer = await self.send("/quiet")
+        self.assertIn("больше не напомню", answer)
+        left = {item.topic for item in await self.db.list_reminders(USER_ID) if item.enabled}
+        self.assertFalse(left & {"pressure", "money", "health", "car"})
+        self.assertIn("english", left)
+
+        listing = await self.send("/reminders")
+        self.assertNotIn("Давление", listing)
+
+    async def test_quiet_once_on_start_of_old_diary(self):
+        import tempfile
+        from pathlib import Path
+
+        from bot.db import Database
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / "diary.db")
+            db = Database(path, "Europe/Moscow")
+            await db.connect()
+            await db.ensure_user(USER_ID)
+            await db.close()
+
+            db = Database(path, "Europe/Moscow")
+            await db.connect()
+            try:
+                left = {item.topic for item in await db.list_reminders(USER_ID) if item.enabled}
+                self.assertEqual(left, {"english"})
+            finally:
+                await db.close()

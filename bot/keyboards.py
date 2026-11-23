@@ -80,7 +80,8 @@ def reminder_list(reminders: Sequence[Reminder], skip_if_measured: bool) -> Inli
     """Список времён кнопками. У каждой — значок темы: 21:00 и 21:30 иначе
     неразличимы, а удалять придётся наугад."""
     builder = InlineKeyboardBuilder()
-    for reminder in sorted(reminders, key=lambda item: (item.topic, item.at)):
+    active = [item for item in reminders if item.enabled]
+    for reminder in sorted(active, key=lambda item: (item.topic, item.at)):
         icon = topic_of(reminder.topic).icon
         builder.button(
             text=f"{icon} {reminder.label}",

@@ -49,6 +49,7 @@ COMMANDS = [
     BotCommand(command="engstats", description="Английский: прогресс"),
     BotCommand(command="baby", description="Малыш: сон, рост и вес, погода"),
     BotCommand(command="help", description="Меню: всё кнопками, без команд"),
+    BotCommand(command="quiet", description="Выключить напоминания про давление, траты, шаги"),
     BotCommand(command="remind", description="Напоминания"),
     BotCommand(command="car", description="Пробег: сводка по машине"),
     BotCommand(command="fuel", description="Топливо: литры, цены, расход"),

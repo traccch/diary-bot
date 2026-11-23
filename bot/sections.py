@@ -107,3 +107,8 @@ def hidden_key(user_id: int) -> str:
 #: главного меню, значения — темы их напоминаний.
 TIDY_SCREENS = {"bp": PRESSURE, "money": MONEY, "health": HEALTH}
 TIDY_FLAG = "tidy_v1"
+
+#: Темы, о которых бот молчит по просьбе хозяина: давление, траты, шаги и сон
+#: взрослого, пробег. Английский и малыш остаются.
+QUIET_TOPICS = (PRESSURE, MONEY, HEALTH, CAR)
+QUIET_FLAG = "quiet_v2"

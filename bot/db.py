@@ -201,6 +201,7 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo, BabyRepo):
         Только для уже существующих дневников: новая база начинается как
         обычно, со всеми разделами.
         """
+        await self._quiet_once()
         if await self.get_meta(sections.TIDY_FLAG):
             return
         cur = await self.conn.execute("SELECT user_id FROM users")
@@ -214,6 +215,33 @@ class Database(PressureRepo, MoneyRepo, EnglishRepo, CarRepo, BabyRepo):
             await self.set_section(user_id, sections.ENGLISH)
         await self.set_meta(sections.TIDY_FLAG, dt.date.today().isoformat())
         logger.info("Разовая уборка: давление и деньги убраны с главного экрана")
+
+    async def _quiet_once(self) -> None:
+        """Выключает напоминания про давление, траты, шаги и пробег — у всех, один раз."""
+        if await self.get_meta(sections.QUIET_FLAG):
+            return
+        cur = await self.conn.execute("SELECT user_id FROM users")
+        for row in await cur.fetchall():
+            await self.quiet(row["user_id"])
+        await self.set_meta(sections.QUIET_FLAG, "1")
+        logger.info("Напоминания про давление, траты, шаги и пробег выключены")
+
+    async def quiet(self, user_id: int) -> int:
+        """Глушит все напоминания, кроме английского и малыша. Возвращает, сколько выключено."""
+        marks = ",".join("?" for _ in sections.QUIET_TOPICS)
+        cur = await self.conn.execute(
+            f"UPDATE reminders SET enabled = 0 WHERE user_id = ? AND enabled = 1"
+            f" AND topic IN ({marks})",
+            (user_id, *sections.QUIET_TOPICS),
+        )
+        changed = cur.rowcount
+        # и отложенные «через 15 минут» по тем же темам
+        await self.conn.execute(
+            f"DELETE FROM snoozes WHERE user_id = ? AND topic IN ({marks})",
+            (user_id, *sections.QUIET_TOPICS),
+        )
+        await self.conn.commit()
+        return changed
 
     async def _migrate(self) -> None:
         """Дополняет уже существующую базу колонками, появившимися в SCHEMA позже.
